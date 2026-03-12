@@ -34,7 +34,9 @@
       "Bash(gh workflow list:*)",
       "Bash(gh pr create:*)",
       "Bash(databricks jobs list:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "WebFetch(domain:claude.ai)",
+      "Bash(curl:*)"
     ]
   }
 }
