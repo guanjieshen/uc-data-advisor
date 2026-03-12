@@ -59,6 +59,16 @@
 - Found via `databricks warehouses list -p fevm-cjc --output json`
 - Current warehouse: 751fe324525584e5 (Serverless Starter Warehouse)
 
+**Lesson**: Clusters need `data_security_mode: "SINGLE_USER"` for Unity Catalog
+- Without it, cluster uses spark_catalog (Hive metastore)
+- Error: "spark_catalog requires a single-part namespace"
+- Fix: Add `data_security_mode: "SINGLE_USER"` to cluster config
+
+**Lesson**: Use correct catalog name for workspace
+- `main` catalog doesn't exist in all workspaces
+- Check available catalogs: `databricks catalogs list -p profile`
+- This workspace uses `cjc_aws_workspace_catalog`
+
 ---
 
 ## Patterns to Follow

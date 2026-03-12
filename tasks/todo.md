@@ -74,6 +74,15 @@
 | Issue | Description | Owner | Status |
 |-------|-------------|-------|--------|
 | GitHub Secrets | Need to add DATABRICKS_HOST and DATABRICKS_TOKEN to repo | TBD | Open |
+| EMU Restrictions | Enterprise Managed User cannot create PRs to cchalc repo | - | Noted |
+
+## Verified Working
+
+- [x] 15 unit tests passing
+- [x] DAB bundle validates
+- [x] Bundle deploys to Databricks
+- [x] Test jobs run successfully (tables created in UC)
+- [ ] GitHub Actions CI (requires PR to main + secrets)
 
 ---
 

@@ -4,7 +4,7 @@ bundle:
 variables:
   catalog:
     description: Unity Catalog catalog name
-    default: main
+    default: cjc_aws_workspace_catalog
   schema:
     description: Schema for UC Advisor resources
     default: uc_advisor
@@ -20,7 +20,7 @@ targets:
       host: https://fevm-cjc-aws-workspace.cloud.databricks.com
       profile: fevm-cjc
     variables:
-      catalog: main
+      catalog: cjc_aws_workspace_catalog
       schema: uc_advisor_dev
 
   prod:
@@ -29,7 +29,7 @@ targets:
       host: https://fevm-cjc-aws-workspace.cloud.databricks.com
       profile: fevm-cjc
     variables:
-      catalog: main
+      catalog: cjc_aws_workspace_catalog
       schema: uc_advisor
 
 include:

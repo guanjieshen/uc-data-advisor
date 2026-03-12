@@ -25,7 +25,16 @@
       "mcp__plugin_databricks-ai-dev-kit_databricks__execute_sql",
       "Bash(databricks sql warehouse start:*)",
       "Bash(databricks warehouses start:*)",
-      "Bash(uv run python:*)"
+      "Bash(uv run python:*)",
+      "Bash(databricks bundle deploy:*)",
+      "Bash(databricks catalogs list:*)",
+      "Bash(databricks bundle run:*)",
+      "Bash(gh run list:*)",
+      "Bash(jj git remote:*)",
+      "Bash(gh workflow list:*)",
+      "Bash(gh pr create:*)",
+      "Bash(databricks jobs list:*)",
+      "Bash(python3:*)"
     ]
   }
 }
