@@ -5,16 +5,16 @@
 ## Current Sprint: Project Setup & Phase 1 Foundation
 
 ### In Progress
-- [ ] **#22**: Audit current Unity Catalog metadata coverage
-  - Requires: Access to fevm-cjc workspace
-  - Output: Metadata coverage report
-  - Informs: Design decisions in #21
+- [x] **#22**: Audit current Unity Catalog metadata coverage ✓
+  - Output: `tasks/audit_report.md`
+  - Findings: 93 tables, 35.8% description coverage, 100% ownership
+  - Recommendation: Use SDK API, prioritize name-based search
+
+- [ ] **#21**: Design metadata access layer and agent tool contracts
+  - Informed by: #22 audit (completed)
+  - Key decisions: SDK API access, name-based search, nullable descriptions
 
 ### Ready to Start
-- [ ] **#21**: Design metadata access layer and agent tool contracts
-  - Informed by: #22 (audit)
-  - Gates: All implementation stories (#3, #4, #5)
-
 - [ ] **#17**: Define pilot success criteria
   - No blockers - can start anytime
 

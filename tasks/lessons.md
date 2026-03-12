@@ -33,6 +33,10 @@
 - `read:project` scope needed for `gh project` commands
 - Use `gh auth refresh -h github.com -s read:project,project`
 
+**Lesson**: workflow scope needed to push GitHub Actions files
+- Error: "refusing to allow an OAuth App to create or update workflow"
+- Use `gh auth refresh -h github.com -s workflow`
+
 **Lesson**: gh auth and git credentials are separate
 - After `gh auth login`, run `gh auth setup-git` to configure git credential helper
 

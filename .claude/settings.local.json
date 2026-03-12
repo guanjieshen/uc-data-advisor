@@ -21,7 +21,11 @@
       "Bash(databricks clusters list:*)",
       "Bash(databricks warehouses list:*)",
       "Bash(databricks bundle validate:*)",
-      "Bash(uv run pytest:*)"
+      "Bash(uv run pytest:*)",
+      "mcp__plugin_databricks-ai-dev-kit_databricks__execute_sql",
+      "Bash(databricks sql warehouse start:*)",
+      "Bash(databricks warehouses start:*)",
+      "Bash(uv run python:*)"
     ]
   }
 }
