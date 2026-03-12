@@ -12,7 +12,16 @@
       "Bash(gh project view:*)",
       "Bash(gh project item-list:*)",
       "Bash(jj bookmark:*)",
-      "Bash(jj new:*)"
+      "Bash(jj new:*)",
+      "WebFetch(domain:gist.github.com)",
+      "Bash(direnv allow:*)",
+      "Bash(uv init:*)",
+      "Bash(uv add:*)",
+      "Bash(databricks auth token:*)",
+      "Bash(databricks clusters list:*)",
+      "Bash(databricks warehouses list:*)",
+      "Bash(databricks bundle validate:*)",
+      "Bash(uv run pytest:*)"
     ]
   }
 }

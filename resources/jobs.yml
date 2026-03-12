@@ -1,0 +1,11 @@
+# Job definitions for UC Data Advisor
+# Add jobs as needed for metadata sync, audit reports, etc.
+
+resources:
+  jobs:
+    # Example: metadata_audit_job:
+    #   name: "[${bundle.target}] UC Metadata Audit"
+    #   tasks:
+    #     - task_key: audit
+    #       notebook_task:
+    #         notebook_path: ../src/notebooks/metadata_audit.py

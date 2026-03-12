@@ -36,6 +36,25 @@
 **Lesson**: gh auth and git credentials are separate
 - After `gh auth login`, run `gh auth setup-git` to configure git credential helper
 
+### Project Setup
+
+**Lesson**: Check for existing Databricks profiles before creating new ones
+- `cat ~/.databrickscfg` to see existing profiles
+- Found `fevm-cjc` profile already configured for target workspace
+
+**Lesson**: uv creates .venv in project dir by default
+- Even with UV_PROJECT_ENVIRONMENT set in .envrc
+- direnv must be sourced in shell before uv commands for env var to take effect
+- Either approach works (.venv local or ~/.virtualenvs/project)
+
+**Lesson**: DAB validation catches issues early
+- Run `databricks bundle validate` before committing
+- Use `-p profile` to specify Databricks profile
+
+**Lesson**: Warehouse ID is useful to capture
+- Found via `databricks warehouses list -p fevm-cjc --output json`
+- Current warehouse: 751fe324525584e5 (Serverless Starter Warehouse)
+
 ---
 
 ## Patterns to Follow
