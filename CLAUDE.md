@@ -48,6 +48,22 @@ Use `gh` CLI to manage the UC Advisor Agent project:
 
 **Recommended execution order**: #22 (audit) → #21 (design) → #3 + #4 (parallel) → #6 + #7 → #10 + #11 → #14 → #17 → #18
 
+## Required Skills
+
+Load these skills from `~/.claude/skills/` when needed:
+
+| Skill | Use For |
+|-------|---------|
+| `databricks-unity-catalog` | UC metadata, system tables, volumes |
+| `databricks-config` | Workspace configuration, authentication |
+| `databricks-agent-bricks` | Building Knowledge Assistants (KA) |
+| `databricks-python-sdk` | Databricks SDK patterns, Connect |
+| `databricks-docs` | Documentation reference |
+| `databricks-model-serving` | Deploying agent endpoints |
+| `databricks-genie` | Genie space integration |
+
+Invoke with `/skill-name` (e.g., `/databricks-unity-catalog`).
+
 ---
 
 ## Workflow Orchestration
