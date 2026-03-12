@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(jj status:*)",
+      "Bash(jj git init:*)",
+      "Bash(jj bookmark create:*)",
+      "Bash(jj describe:*)",
+      "Bash(jj log:*)",
+      "Bash(jj git push:*)",
+      "Bash(gh auth login:*)",
+      "Bash(gh auth:*)",
+      "Bash(gh project view:*)",
+      "Bash(gh project item-list:*)",
+      "Bash(jj bookmark:*)",
+      "Bash(jj new:*)"
+    ]
+  }
+}
