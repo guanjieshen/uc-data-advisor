@@ -1,0 +1,100 @@
+# Job definitions for UC Data Advisor
+
+resources:
+  jobs:
+    # Job to create test tables for development/testing
+    create_test_tables:
+      name: "[${bundle.target}] UC Advisor - Create Test Tables"
+      description: "Creates sample tables for testing the UC Data Advisor agent"
+      tags:
+        project: uc-data-advisor
+        purpose: testing
+
+      tasks:
+        - task_key: create_tables
+          notebook_task:
+            notebook_path: ../src/notebooks/create_test_table.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 0
+            data_security_mode: "SINGLE_USER"
+            spark_conf:
+              "spark.databricks.cluster.profile": "singleNode"
+              "spark.master": "local[*]"
+            custom_tags:
+              ResourceClass: "SingleNode"
+
+    # Job to verify deployment
+    verify_deployment:
+      name: "[${bundle.target}] UC Advisor - Verify Deployment"
+      description: "Verifies that the UC Data Advisor bundle deployed correctly"
+      tags:
+        project: uc-data-advisor
+        purpose: verification
+
+      tasks:
+        - task_key: verify
+          notebook_task:
+            notebook_path: ../src/notebooks/verify_deployment.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 0
+            data_security_mode: "SINGLE_USER"
+            spark_conf:
+              "spark.databricks.cluster.profile": "singleNode"
+              "spark.master": "local[*]"
+            custom_tags:
+              ResourceClass: "SingleNode"
+
+    # Combined setup and verify workflow
+    setup_and_verify:
+      name: "[${bundle.target}] UC Advisor - Setup & Verify"
+      description: "Full setup: creates test tables and verifies deployment"
+      tags:
+        project: uc-data-advisor
+        purpose: setup
+
+      tasks:
+        - task_key: create_tables
+          notebook_task:
+            notebook_path: ../src/notebooks/create_test_table.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 0
+            data_security_mode: "SINGLE_USER"
+            spark_conf:
+              "spark.databricks.cluster.profile": "singleNode"
+              "spark.master": "local[*]"
+            custom_tags:
+              ResourceClass: "SingleNode"
+
+        - task_key: verify
+          depends_on:
+            - task_key: create_tables
+          notebook_task:
+            notebook_path: ../src/notebooks/verify_deployment.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 0
+            data_security_mode: "SINGLE_USER"
+            spark_conf:
+              "spark.databricks.cluster.profile": "singleNode"
+              "spark.master": "local[*]"
+            custom_tags:
+              ResourceClass: "SingleNode"

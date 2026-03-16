@@ -1,0 +1,8 @@
+# Unity Catalog schema definitions
+
+resources:
+  schemas:
+    uc_advisor_schema:
+      name: ${var.schema}
+      catalog_name: ${var.catalog}
+      comment: "Schema for UC Data Advisor agent resources"
