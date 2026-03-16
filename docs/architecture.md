@@ -27,7 +27,7 @@ flowchart TB
 
     subgraph LLM["LLM GATEWAY & MODEL"]
         GW["Databricks AI Gateway<br/><i>Rate Limiting · Monitoring · Governance</i>"]
-        CLAUDE["Claude Opus 4.5<br/><i>Foundation Model</i>"]
+        CLAUDE["Claude Opus 4.6<br/><i>Foundation Model</i>"]
         GW -->|inference| CLAUDE
     end
 
@@ -105,7 +105,7 @@ All agents are built using **Databricks Agent Bricks**.
 | Component | Description |
 |-----------|-------------|
 | **Databricks AI Gateway** | Rate limiting, monitoring, governance |
-| **Claude Opus 4.5** | Foundation model for inference |
+| **Claude Opus 4.6** | Foundation model for inference |
 
 ### Tools & Retrieval
 

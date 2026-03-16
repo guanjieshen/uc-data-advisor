@@ -1,0 +1,34 @@
+command:
+  - "python"
+  - "-m"
+  - "uvicorn"
+  - "app:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
+
+env:
+  - name: SERVING_ENDPOINT
+    value: databricks-claude-opus-4-6
+  - name: GENIE_SPACE_ID
+    value: "01f12172a9361d4ebf8761f3ba61bc65"
+  - name: VS_ENDPOINT_NAME
+    value: uc-advisor-vs
+  - name: VS_INDEX_METADATA
+    value: "enbridge_operations.uc_advisor.uc_metadata_vs_index"
+  - name: VS_INDEX_KNOWLEDGE
+    value: "enbridge_operations.uc_advisor.knowledge_vs_index"
+  - name: PGHOST
+    valueFrom: uc-advisor-sessions-db
+  - name: PGPORT
+    valueFrom: uc-advisor-sessions-db
+  - name: PGDATABASE
+    valueFrom: uc-advisor-sessions-db
+  - name: PGUSER
+    valueFrom: uc-advisor-sessions-db
+
+resources:
+  - name: uc-advisor-sessions-db
+    database:
+      name: uc-advisor-sessions
