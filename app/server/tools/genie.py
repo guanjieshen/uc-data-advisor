@@ -11,7 +11,7 @@ _POLL_INTERVAL = 2  # seconds
 _MAX_POLL_TIME = 120  # seconds
 
 
-async def query_genie(question: str) -> dict:
+def query_genie(question: str) -> dict:
     """Send a natural language question to a Genie Space and return results.
 
     Uses the Genie REST API: start conversation -> poll for completion -> extract SQL + results.

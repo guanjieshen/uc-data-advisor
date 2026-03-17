@@ -15,7 +15,7 @@ def _get_client() -> WorkspaceClient:
     return _client
 
 
-async def semantic_search_tables(query: str) -> list[dict]:
+def semantic_search_tables(query: str) -> list[dict]:
     """Search UC metadata using Vector Search for semantic similarity.
 
     Returns tables whose descriptions are semantically similar to the query.

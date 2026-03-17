@@ -4,7 +4,7 @@ import os
 from ..config import get_workspace_client
 
 
-async def search_knowledge_base(query: str) -> list[dict]:
+def search_knowledge_base(query: str) -> list[dict]:
     """Search the FAQ/documentation knowledge base using Vector Search.
 
     Returns relevant FAQ entries and documentation passages.

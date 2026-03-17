@@ -1,6 +1,6 @@
 """Data Metrics Agent — answers analytical questions via Genie."""
 
-from .base import BaseAgent
+from .base import ResponsesBaseAgent
 from ..tools.genie import query_genie
 
 GENIE_TOOL = [
@@ -45,12 +45,12 @@ The workspace contains operational data for a midstream oil & gas pipeline compa
 - Market data and forecasts"""
 
 
-class MetricsAgent(BaseAgent):
+class MetricsAgent(ResponsesBaseAgent):
     name = "metrics"
     system_prompt = SYSTEM_PROMPT
     tools = GENIE_TOOL
 
-    async def execute_tool(self, name: str, args: dict) -> dict | list:
+    def execute_tool(self, name: str, args: dict) -> dict | list:
         if name == "query_genie":
-            return await query_genie(**args)
+            return query_genie(**args)
         return {"error": f"Unknown tool: {name}"}

@@ -1,6 +1,6 @@
 """Data Discovery Agent — browses Unity Catalog metadata."""
 
-from .base import BaseAgent
+from .base import ResponsesBaseAgent
 from ..uc_tools import execute_tool as uc_execute_tool
 from ..tools.vector_search import semantic_search_tables
 
@@ -126,12 +126,12 @@ The workspace contains operational data for a midstream oil & gas pipeline compa
 - Market data and forecasts"""
 
 
-class DiscoveryAgent(BaseAgent):
+class DiscoveryAgent(ResponsesBaseAgent):
     name = "discovery"
     system_prompt = SYSTEM_PROMPT
     tools = UC_TOOLS
 
-    async def execute_tool(self, name: str, args: dict) -> dict | list:
+    def execute_tool(self, name: str, args: dict) -> dict | list:
         if name == "semantic_search_tables":
-            return await semantic_search_tables(**args)
-        return await uc_execute_tool(name, args)
+            return semantic_search_tables(**args)
+        return uc_execute_tool(name, args)

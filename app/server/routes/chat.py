@@ -36,7 +36,12 @@ async def chat(request: ChatRequest):
             # Prepend history, but cap total to last 10 exchanges (20 messages)
             messages = (history + messages)[-20:]
 
-    response, agent_name = await orchestrator.route(messages)
+    try:
+        response, agent_name = await orchestrator.route(messages)
+    except Exception as e:
+        logger.error(f"Orchestrator error: {e}", exc_info=True)
+        response = "I'm sorry, I encountered an error processing your request. Please try rephrasing your question."
+        agent_name = "error"
 
     # Save to Lakebase if session_id provided
     if request.session_id and await SessionMemory.is_available():

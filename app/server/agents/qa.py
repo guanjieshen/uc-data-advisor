@@ -1,6 +1,6 @@
 """Q&A Agent — answers governance, access, and FAQ questions via knowledge base."""
 
-from .base import BaseAgent
+from .base import ResponsesBaseAgent
 from ..tools.knowledge_search import search_knowledge_base
 
 KNOWLEDGE_TOOL = [
@@ -42,12 +42,12 @@ Topics you cover:
 - General questions about the Enbridge data platform"""
 
 
-class QAAgent(BaseAgent):
+class QAAgent(ResponsesBaseAgent):
     name = "qa"
     system_prompt = SYSTEM_PROMPT
     tools = KNOWLEDGE_TOOL
 
-    async def execute_tool(self, name: str, args: dict) -> dict | list:
+    def execute_tool(self, name: str, args: dict) -> dict | list:
         if name == "search_knowledge_base":
-            return await search_knowledge_base(**args)
+            return search_knowledge_base(**args)
         return {"error": f"Unknown tool: {name}"}

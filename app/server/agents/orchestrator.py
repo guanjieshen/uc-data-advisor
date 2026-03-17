@@ -1,14 +1,34 @@
 """Orchestrator — classifies intent and routes to specialized agents."""
 
 import os
-import time
+import asyncio
 import logging
-from .base import get_llm_client, _try_start_span
+
+import mlflow
+from openai import BadRequestError
+
+from .base import get_llm_client
 from .discovery import DiscoveryAgent
 from .metrics import MetricsAgent
 from .qa import QAAgent
 
+from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse
+
 logger = logging.getLogger(__name__)
+
+
+def _extract_text(response: ResponsesAgentResponse) -> str:
+    """Extract text from ResponsesAgentResponse, working around mlflow content parsing."""
+    texts = []
+    for output in response.output:
+        if getattr(output, "type", None) == "message":
+            for content in output.content:
+                if isinstance(content, dict):
+                    if content.get("type") == "output_text":
+                        texts.append(content.get("text", ""))
+                elif getattr(content, "type", None) == "output_text":
+                    texts.append(content.text)
+    return "".join(texts)
 
 CLASSIFY_PROMPT = """You are an intent classifier for the UC Data Advisor at Enbridge.
 
@@ -31,45 +51,28 @@ class Orchestrator:
             "qa": QAAgent(),
         }
 
+    @mlflow.trace(name="orchestrator.route")
     async def route(self, messages: list[dict]) -> tuple[str, str]:
         """Classify intent and route to the appropriate agent.
 
         Returns (response_text, agent_name).
         """
-        start = time.time()
-        span_ctx, mlflow = _try_start_span("orchestrator.route")
+        intent = await self._classify(messages)
+        logger.info(f"Intent classified as: {intent}")
 
-        try:
-            if span_ctx:
-                span = span_ctx.__enter__()
-                span.set_attribute("input.message_count", len(messages))
+        agent = self._agents.get(intent)
+        if agent:
+            responses_input = [
+                {"role": m["role"], "content": m["content"]} for m in messages
+            ]
+            request = ResponsesAgentRequest(input=responses_input)
+            response = await asyncio.to_thread(agent.predict, request)
+            return _extract_text(response), agent.name
 
-            intent = await self._classify(messages)
-            logger.info(f"Intent classified as: {intent}")
+        response = await self._general_response(messages)
+        return response, "general"
 
-            if span_ctx:
-                span.set_attribute("intent", intent)
-
-            agent = self._agents.get(intent)
-            if agent:
-                response = await agent.run(messages)
-                if span_ctx:
-                    span.set_attribute("agent", agent.name)
-                    span.set_attribute("latency_ms", int((time.time() - start) * 1000))
-                return response, agent.name
-
-            response = await self._general_response(messages)
-            if span_ctx:
-                span.set_attribute("agent", "general")
-                span.set_attribute("latency_ms", int((time.time() - start) * 1000))
-            return response, "general"
-        finally:
-            if span_ctx:
-                try:
-                    span_ctx.__exit__(None, None, None)
-                except Exception:
-                    pass
-
+    @mlflow.trace(name="orchestrator.classify")
     async def _classify(self, messages: list[dict]) -> str:
         """Single LLM call to classify intent."""
         client = get_llm_client()
@@ -84,12 +87,7 @@ class Orchestrator:
         if not last_user_msg:
             return "general"
 
-        span_ctx, mlflow = _try_start_span("orchestrator.classify")
         try:
-            if span_ctx:
-                span = span_ctx.__enter__()
-                span.set_attribute("user_message", last_user_msg[:200])
-
             response = await client.chat.completions.create(
                 model=model,
                 messages=[
@@ -99,22 +97,18 @@ class Orchestrator:
                 max_tokens=16,
                 temperature=0,
             )
+        except BadRequestError as e:
+            if "guardrail_triggered" in str(e):
+                logger.warning(f"Guardrail triggered during classification, defaulting to discovery")
+                return "discovery"
+            raise
 
-            intent = (response.choices[0].message.content or "").strip().lower()
-            if intent not in ("discovery", "metrics", "qa", "general"):
-                logger.warning(f"Unexpected intent '{intent}', defaulting to discovery")
-                intent = "discovery"
+        intent = (response.choices[0].message.content or "").strip().lower()
+        if intent not in ("discovery", "metrics", "qa", "general"):
+            logger.warning(f"Unexpected intent '{intent}', defaulting to discovery")
+            intent = "discovery"
 
-            if span_ctx:
-                span.set_attribute("intent", intent)
-
-            return intent
-        finally:
-            if span_ctx:
-                try:
-                    span_ctx.__exit__(None, None, None)
-                except Exception:
-                    pass
+        return intent
 
     async def _general_response(self, messages: list[dict]) -> str:
         """Handle general/greeting messages without tools."""

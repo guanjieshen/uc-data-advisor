@@ -13,7 +13,7 @@ def _get_client() -> WorkspaceClient:
     return _client
 
 
-async def execute_tool(name: str, args: dict) -> dict | list:
+def execute_tool(name: str, args: dict) -> dict | list:
     """Execute a UC metadata tool by name."""
     handlers = {
         "list_catalogs": _list_catalogs,
