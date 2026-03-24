@@ -1,4 +1,4 @@
-"""Lakebase session memory for conversation persistence."""
+"""Lakebase session memory and feedback storage."""
 
 import os
 import logging
@@ -8,11 +8,21 @@ logger = logging.getLogger(__name__)
 
 # Connection pool — initialized lazily
 _pool = None
+_tables_ensured = False
+
+
+def _get_lakebase_token() -> str:
+    """Generate a fresh Lakebase JWT token via Databricks SDK."""
+    from .config import get_workspace_client
+    client = get_workspace_client()
+    instance_name = os.environ.get("LAKEBASE_INSTANCE", "uc-advisor-sessions")
+    cred = client.database.generate_database_credential(instance_names=[instance_name])
+    return cred.token
 
 
 async def _get_pool():
     """Get or create the asyncpg connection pool."""
-    global _pool
+    global _pool, _tables_ensured
     if _pool is None:
         import asyncpg
         import ssl
@@ -22,17 +32,56 @@ async def _get_pool():
         ssl_ctx.check_hostname = False
         ssl_ctx.verify_mode = ssl.CERT_NONE
 
+        token = _get_lakebase_token()
+        # PGUSER is the SP client ID when running as a Databricks App
+        user = os.environ.get("PGUSER", os.environ.get("DATABRICKS_CLIENT_ID", ""))
+
         _pool = await asyncpg.create_pool(
             host=os.environ.get("PGHOST", "localhost"),
             port=int(os.environ.get("PGPORT", "5432")),
             database=os.environ.get("PGDATABASE", "uc_advisor_sessions"),
-            user=os.environ.get("PGUSER", ""),
-            password=os.environ.get("PGPASSWORD", ""),
+            user=user,
+            password=token,
             ssl=ssl_ctx,
             min_size=1,
             max_size=5,
         )
+
+    if not _tables_ensured:
+        try:
+            await _ensure_tables(_pool)
+        except Exception as e:
+            logger.warning(f"Failed to ensure tables: {e}")
+        _tables_ensured = True
+
     return _pool
+
+
+async def _ensure_tables(pool):
+    """Create tables if they don't exist."""
+    await pool.execute("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            session_id TEXT NOT NULL,
+            message_index INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT,
+            agent TEXT,
+            PRIMARY KEY (session_id, message_index)
+        )
+    """)
+    await pool.execute("""
+        CREATE TABLE IF NOT EXISTS feedback (
+            message_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            rating SMALLINT NOT NULL,
+            comment TEXT,
+            agent TEXT,
+            question TEXT,
+            answer TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+    """)
 
 
 class SessionMemory:
@@ -96,6 +145,28 @@ class SessionMemory:
             )
         except Exception as e:
             logger.warning(f"Failed to save exchange for {session_id}: {e}")
+
+    @staticmethod
+    async def save_feedback(
+        message_id: str,
+        session_id: str,
+        rating: int,
+        comment: Optional[str] = None,
+        agent: Optional[str] = None,
+        question: Optional[str] = None,
+        answer: Optional[str] = None,
+    ):
+        """Save or update feedback for a message."""
+        pool = await _get_pool()
+        await pool.execute(
+            """
+            INSERT INTO feedback (message_id, session_id, rating, comment, agent, question, answer)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (message_id)
+            DO UPDATE SET rating = $3, comment = $4, updated_at = NOW()
+            """,
+            message_id, session_id, rating, comment, agent, question, answer,
+        )
 
     @staticmethod
     async def is_available() -> bool:

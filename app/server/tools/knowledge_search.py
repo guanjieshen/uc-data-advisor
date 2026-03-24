@@ -12,7 +12,7 @@ def search_knowledge_base(query: str) -> list[dict]:
     client = get_workspace_client()
     index_name = os.environ.get(
         "VS_INDEX_KNOWLEDGE",
-        "enbridge_operations.uc_advisor.knowledge_vs_index",
+        "uc_data_advisor.default.knowledge_vs_index",
     )
 
     try:
@@ -25,7 +25,8 @@ def search_knowledge_base(query: str) -> list[dict]:
 
         results = []
         if response.result and response.result.data_array:
-            columns = [c.name for c in response.result.manifest.columns]
+            manifest = getattr(response, "manifest", None) or getattr(response.result, "manifest", None)
+            columns = [c.name for c in manifest.columns]
             for row in response.result.data_array:
                 entry = dict(zip(columns, row))
                 results.append(entry)

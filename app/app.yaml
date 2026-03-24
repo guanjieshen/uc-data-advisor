@@ -10,25 +10,20 @@ command:
 
 env:
   - name: SERVING_ENDPOINT
-    value: databricks-claude-opus-4-6
+    value: uc-advisor-llm
   - name: GENIE_SPACE_ID
     value: "01f12172a9361d4ebf8761f3ba61bc65"
-  - name: VS_ENDPOINT_NAME
-    value: uc-advisor-vs
   - name: VS_INDEX_METADATA
-    value: "enbridge_operations.uc_advisor.uc_metadata_vs_index"
+    value: "uc_data_advisor.default.uc_metadata_vs_index"
   - name: VS_INDEX_KNOWLEDGE
-    value: "enbridge_operations.uc_advisor.knowledge_vs_index"
+    value: "uc_data_advisor.default.knowledge_vs_index"
   - name: PGHOST
-    valueFrom: uc-advisor-sessions-db
+    value: "instance-3f63074d-cb71-45fe-84e8-d37b31013f7c.database.cloud.databricks.com"
   - name: PGPORT
-    valueFrom: uc-advisor-sessions-db
+    value: "5432"
   - name: PGDATABASE
-    valueFrom: uc-advisor-sessions-db
+    value: "uc_advisor_sessions"
   - name: PGUSER
-    valueFrom: uc-advisor-sessions-db
-
-resources:
-  - name: uc-advisor-sessions-db
-    database:
-      name: uc-advisor-sessions
+    value: "03e2f707-ee86-4ed4-adea-28a6e792c82f"
+  - name: LAKEBASE_INSTANCE
+    value: "uc-advisor-sessions"

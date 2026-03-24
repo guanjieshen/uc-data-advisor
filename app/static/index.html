@@ -222,6 +222,70 @@
 
     #input-form button:hover { background: var(--accent-hover); }
     #input-form button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .feedback-bar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 6px;
+      margin-left: 44px;
+    }
+
+    .feedback-btn {
+      background: none;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      padding: 4px 6px;
+      cursor: pointer;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      font-size: 12px;
+      transition: all 0.15s;
+    }
+
+    .feedback-btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+    .feedback-btn svg { width: 16px; height: 16px; }
+    .feedback-btn.active-up { color: #4ade80; }
+    .feedback-btn.active-down { color: #f87171; }
+
+    .feedback-comment-form {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+      margin-left: 44px;
+      max-width: 500px;
+      animation: fadeIn 0.15s ease;
+    }
+
+    .feedback-comment-form input {
+      flex: 1;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+      outline: none;
+    }
+
+    .feedback-comment-form input:focus { border-color: var(--accent); }
+    .feedback-comment-form input::placeholder { color: var(--text-muted); }
+
+    .feedback-comment-form button {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 8px;
+      background: var(--border);
+      color: var(--text);
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .feedback-comment-form button:hover { background: var(--accent); }
   </style>
 </head>
 <body>
@@ -310,7 +374,7 @@
       handleSubmit(new Event('submit'));
     }
 
-    function addMessage(role, content) {
+    function addMessage(role, content, meta = {}) {
       // Remove welcome on first message
       const welcome = document.getElementById('welcome');
       if (welcome) welcome.remove();
@@ -323,6 +387,24 @@
         <div class="message-content">${formatContent(content)}</div>
       `;
       chatContainer.appendChild(div);
+
+      // Add feedback buttons for assistant messages with a message_id
+      if (role === 'assistant' && meta.messageId) {
+        const bar = document.createElement('div');
+        bar.className = 'feedback-bar';
+        bar.dataset.messageId = meta.messageId;
+        bar.dataset.agent = meta.agent || '';
+        bar.innerHTML = `
+          <button class="feedback-btn" onclick="submitFeedback(this, 1)" title="Helpful">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+          </button>
+          <button class="feedback-btn" onclick="submitFeedback(this, -1)" title="Not helpful">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
+          </button>
+        `;
+        div.appendChild(bar);
+      }
+
       chatContainer.scrollTop = chatContainer.scrollHeight;
       return div;
     }
@@ -383,7 +465,7 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
 
-        addMessage('assistant', data.response);
+        addMessage('assistant', data.response, { messageId: data.message_id, agent: data.agent });
         conversationHistory.push({ role: 'assistant', content: data.response });
       } catch (err) {
         removeTypingIndicator();
@@ -393,6 +475,77 @@
       isLoading = false;
       sendBtn.disabled = false;
       userInput.focus();
+    }
+
+    async function submitFeedback(btn, rating) {
+      const bar = btn.closest('.feedback-bar');
+      const messageId = bar.dataset.messageId;
+      const agent = bar.dataset.agent;
+
+      // Toggle active state
+      bar.querySelectorAll('.feedback-btn').forEach(b => b.classList.remove('active-up', 'active-down'));
+      btn.classList.add(rating === 1 ? 'active-up' : 'active-down');
+
+      // Remove existing comment form
+      const existingForm = bar.parentElement.querySelector('.feedback-comment-form');
+      if (existingForm) existingForm.remove();
+
+      // Show comment input for thumbs down
+      if (rating === -1) {
+        const form = document.createElement('div');
+        form.className = 'feedback-comment-form';
+        form.innerHTML = `
+          <input type="text" placeholder="What was wrong? How should it answer?" onkeydown="if(event.key==='Enter'){submitComment(this)}">
+          <button onclick="submitComment(this.previousElementSibling)">Send</button>
+        `;
+        form.dataset.messageId = messageId;
+        form.dataset.agent = agent;
+        bar.after(form);
+        form.querySelector('input').focus();
+      }
+
+      // Get the question and answer for context
+      const msgDiv = bar.closest('.message');
+      const answer = msgDiv.querySelector('.message-content')?.textContent?.slice(0, 500) || '';
+      const prevMsg = msgDiv.previousElementSibling;
+      const question = prevMsg?.classList.contains('user')
+        ? prevMsg.querySelector('.message-content')?.textContent || ''
+        : '';
+
+      try {
+        await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message_id: messageId, rating, session_id: sessionId,
+            agent, question, answer,
+          }),
+        });
+      } catch (e) { /* non-critical */ }
+    }
+
+    async function submitComment(input) {
+      const form = input.closest('.feedback-comment-form');
+      const comment = input.value.trim();
+      if (!comment) return;
+
+      const messageId = form.dataset.messageId;
+      const agent = form.dataset.agent;
+      input.disabled = true;
+
+      try {
+        await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message_id: messageId, rating: -1, comment,
+            session_id: sessionId, agent,
+          }),
+        });
+        form.innerHTML = '<span style="color:var(--text-muted);font-size:12px">Thanks for your feedback</span>';
+      } catch (e) {
+        input.disabled = false;
+      }
     }
   </script>
 </body>

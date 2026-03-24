@@ -23,10 +23,8 @@ def semantic_search_tables(query: str) -> list[dict]:
     client = _get_client()
     index_name = os.environ.get(
         "VS_INDEX_METADATA",
-        "enbridge_operations.uc_advisor.uc_metadata_vs_index",
+        "uc_data_advisor.default.uc_metadata_vs_index",
     )
-    endpoint_name = os.environ.get("VS_ENDPOINT_NAME", "uc-advisor-vs")
-
     try:
         response = client.vector_search_indexes.query_index(
             index_name=index_name,
@@ -37,7 +35,8 @@ def semantic_search_tables(query: str) -> list[dict]:
 
         results = []
         if response.result and response.result.data_array:
-            columns = [c.name for c in response.result.manifest.columns]
+            manifest = getattr(response, "manifest", None) or getattr(response.result, "manifest", None)
+            columns = [c.name for c in manifest.columns]
             for row in response.result.data_array:
                 entry = dict(zip(columns, row))
                 results.append({

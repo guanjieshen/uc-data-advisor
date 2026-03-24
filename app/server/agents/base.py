@@ -106,21 +106,6 @@ class ResponsesBaseAgent(ResponsesAgent):
                         self.create_text_output_item(text=text, id=str(uuid4()))
                     )
                     return ResponsesAgentResponse(output=output_items)
-                if "output_guardrail_triggered" in error_str:
-                    logger.warning(f"Output guardrail triggered for {self.name}, retrying without tool results")
-                    summary = "I found relevant results but the response was filtered. Please provide a summary based on the tool calls made."
-                    full_messages.append({"role": "user", "content": summary})
-                    try:
-                        retry_kwargs = {**kwargs, "messages": full_messages}
-                        retry_kwargs.pop("tools", None)
-                        response = client.chat.completions.create(**retry_kwargs)
-                        text = response.choices[0].message.content or ""
-                    except Exception:
-                        text = "I found some results but the endpoint's safety filter blocked the detailed response. Try asking about a specific catalog or table name instead."
-                    output_items.append(
-                        self.create_text_output_item(text=text, id=str(uuid4()))
-                    )
-                    return ResponsesAgentResponse(output=output_items)
                 raise
 
             choice = response.choices[0]

@@ -4,33 +4,33 @@ bundle:
 variables:
   catalog:
     description: Unity Catalog catalog name
-    default: cjc_aws_workspace_catalog
+    default: uc_data_advisor
   schema:
     description: Schema for UC Advisor resources
-    default: uc_advisor
+    default: default
   warehouse_id:
     description: SQL Warehouse ID for queries
-    default: 751fe324525584e5
+    default: 23bf2a865893d648
 
 targets:
   dev:
     mode: development
     default: true
     workspace:
-      host: https://fevm-cjc-aws-workspace.cloud.databricks.com
-      profile: fevm-cjc
+      host: https://fevm-enbridge.cloud.databricks.com
+      profile: enbridge
     variables:
-      catalog: cjc_aws_workspace_catalog
-      schema: uc_advisor_dev
+      catalog: uc_data_advisor
+      schema: default
 
   prod:
     mode: production
     workspace:
-      host: https://fevm-cjc-aws-workspace.cloud.databricks.com
-      profile: fevm-cjc
+      host: https://fevm-enbridge.cloud.databricks.com
+      profile: enbridge
     variables:
-      catalog: cjc_aws_workspace_catalog
-      schema: uc_advisor
+      catalog: uc_data_advisor
+      schema: default
 
 include:
   - resources/*.yml

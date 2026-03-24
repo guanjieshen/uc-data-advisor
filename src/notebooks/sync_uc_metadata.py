@@ -1,7 +1,7 @@
 """UC Metadata Sync — Collect metadata from all UC tables and write to Delta + VS index.
 
 Collects metadata from all accessible UC catalogs/schemas/tables using the Databricks SDK,
-writes to enbridge_operations.uc_advisor.uc_metadata_docs Delta table via SQL Statements API,
+writes to uc_data_advisor.default.uc_metadata_docs Delta table via SQL Statements API,
 and creates a Vector Search index on that table.
 
 Run (fish shell):
@@ -28,8 +28,8 @@ from databricks.sdk.service.vectorsearch import (
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-CATALOG = "enbridge_operations"
-SCHEMA = "uc_advisor"
+CATALOG = "uc_data_advisor"
+SCHEMA = "default"
 TABLE = f"{CATALOG}.{SCHEMA}.uc_metadata_docs"
 VS_INDEX = f"{CATALOG}.{SCHEMA}.uc_metadata_vs_index"
 VS_ENDPOINT = "uc-advisor-vs"

@@ -68,19 +68,31 @@ def _extract_genie_result(msg_resp: dict) -> dict:
     """Extract SQL and results from a completed Genie message response."""
     attachments = msg_resp.get("attachments", [])
     result = {
-        "answer": msg_resp.get("content", ""),
+        "answer": None,
         "sql": None,
         "data": None,
+        "columns": None,
     }
 
     for attachment in attachments:
-        if attachment.get("type") == "QUERY":
-            query_info = attachment.get("query", {})
+        # Text answer (new format)
+        if "text" in attachment:
+            result["answer"] = attachment["text"].get("content", "")
+
+        # SQL query and results
+        if "query" in attachment:
+            query_info = attachment["query"]
             result["sql"] = query_info.get("query", "")
-            result["data"] = query_info.get("result", {}).get("data_array", [])
+            # Results may be inline or require fetching via statement_id
+            query_result = query_info.get("result", {})
+            result["data"] = query_result.get("data_array", [])
             result["columns"] = [
                 col.get("name", "")
-                for col in query_info.get("result", {}).get("manifest", {}).get("columns", [])
+                for col in query_result.get("manifest", {}).get("columns", [])
             ]
+
+    # Fallback to top-level content if no text attachment
+    if not result["answer"]:
+        result["answer"] = msg_resp.get("content", "")
 
     return result

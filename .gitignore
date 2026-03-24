@@ -215,6 +215,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Test output
+tests/benchmark_results.json
+
 # Claude
 .claude/
 .claude/*

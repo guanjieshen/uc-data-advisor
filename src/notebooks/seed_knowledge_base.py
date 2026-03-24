@@ -17,8 +17,8 @@ from pyspark.sql import Row
 # COMMAND ----------
 
 # Configuration
-TARGET_CATALOG = "enbridge_operations"
-TARGET_SCHEMA = "uc_advisor"
+TARGET_CATALOG = "uc_data_advisor"
+TARGET_SCHEMA = "default"
 TARGET_TABLE = f"{TARGET_CATALOG}.{TARGET_SCHEMA}.knowledge_base"
 
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {TARGET_CATALOG}.{TARGET_SCHEMA}")
