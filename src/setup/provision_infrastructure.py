@@ -79,7 +79,10 @@ def provision(config: dict, w) -> dict:
     # Step 6: Create Genie Space
     infra["genie_space_id"] = _create_genie_space(w, infra, app_name, config)
 
-    # Step 7: Grant permissions
+    # Step 7: Create Databricks App (to get auto-created SP)
+    _create_app(w, infra, app_name, config)
+
+    # Step 8: Grant permissions — to both user-provided identity AND auto-created app SP
     _grant_permissions(w, infra, config, identity)
 
     print()
@@ -439,6 +442,54 @@ def _create_genie_space(w, infra: dict, app_name: str, config: dict) -> str:
 # Step 7: Permissions
 # ---------------------------------------------------------------------------
 
+def _create_app(w, infra: dict, app_name: str, config: dict) -> None:
+    """Create Databricks App and capture its auto-created SP."""
+    import subprocess
+
+    profile = config.get("workspace", {}).get("profile", "")
+    print(f"  [app] Creating app {app_name}...", end=" ", flush=True)
+
+    def _cli(cmd_args):
+        cmd = ["databricks"] + cmd_args
+        if profile:
+            cmd += ["-p", profile]
+        return subprocess.run(cmd, capture_output=True, text=True)
+
+    # Check if app exists
+    result = _cli(["apps", "get", app_name, "-o", "json"])
+    if result.returncode == 0:
+        try:
+            app_data = json.loads(result.stdout)
+            sp_id = app_data.get("service_principal_client_id", "")
+            if sp_id:
+                infra["app_sp_client_id"] = sp_id
+                print(f"already exists (SP: {sp_id[:20]}...)")
+            else:
+                print("already exists")
+        except Exception:
+            print("already exists")
+        return
+
+    # Create app
+    result = _cli(["apps", "create", app_name, "--description",
+                    f"UC Data Advisor — {infra.get('advisor_catalog', '')}"])
+    if result.returncode == 0:
+        # Fetch the created app to get its SP
+        result2 = _cli(["apps", "get", app_name, "-o", "json"])
+        if result2.returncode == 0:
+            try:
+                app_data = json.loads(result2.stdout)
+                sp_id = app_data.get("service_principal_client_id", "")
+                infra["app_sp_client_id"] = sp_id
+                print(f"created (SP: {sp_id[:20]}...)")
+            except Exception:
+                print("created")
+        else:
+            print("created")
+    else:
+        print(f"FAILED: {result.stderr[:200]}")
+
+
 def _grant_permissions(w, infra: dict, config: dict, identity: dict) -> None:
     """Grant permissions based on app identity type."""
     identity_type = identity.get("type", "service_principal")
@@ -452,9 +503,18 @@ def _grant_permissions(w, infra: dict, config: dict, identity: dict) -> None:
     advisor_catalog = infra["advisor_catalog"]
     warehouse_id = infra["warehouse_id"]
 
-    if identity_type == "service_principal":
-        _grant_sp_permissions(w, infra, identity_name, source_catalogs, advisor_catalog, warehouse_id)
-    else:
+    # Always grant to the auto-created app SP (if different from identity)
+    app_sp = infra.get("app_sp_client_id", "")
+    sp_list = set()
+    if identity_type == "service_principal" and identity_name:
+        sp_list.add(identity_name)
+    if app_sp:
+        sp_list.add(app_sp)
+
+    if sp_list:
+        for sp_id in sp_list:
+            _grant_sp_permissions(w, infra, sp_id, source_catalogs, advisor_catalog, warehouse_id)
+    elif identity_type == "user":
         _print_user_grants(config, infra, identity_name, source_catalogs, advisor_catalog)
 
 

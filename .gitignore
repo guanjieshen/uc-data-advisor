@@ -218,6 +218,10 @@ __marimo__/
 # Test output
 tests/benchmark_results.json
 
+# User-specific config (contains generated state and credentials)
+config/my_config.yaml
+config/.generated/
+
 # Claude
 .claude/
 .claude/*

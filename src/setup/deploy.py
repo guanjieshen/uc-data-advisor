@@ -294,7 +294,7 @@ env:
   - name: PGDATABASE
     value: "{lb.get('database', '')}"
   - name: PGUSER
-    value: "{identity.get('name', '')}"
+    value: "{infra.get('app_sp_client_id', identity.get('name', ''))}"
   - name: LAKEBASE_INSTANCE
     value: "{lb.get('instance', '')}"
 """
