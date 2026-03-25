@@ -30,11 +30,13 @@ def _extract_text(response: ResponsesAgentResponse) -> str:
                     texts.append(content.text)
     return "".join(texts)
 
-CLASSIFY_PROMPT = """You are an intent classifier for the UC Data Advisor at Enbridge.
+from ..advisor_config import get_prompts
+
+DEFAULT_CLASSIFY_PROMPT = """You are an intent classifier for the UC Data Advisor.
 
 Classify the user's latest message into exactly one category:
 - discovery: Questions about finding datasets, browsing catalogs/schemas/tables, understanding table structures, or checking what data exists.
-- metrics: Questions asking for specific numbers, aggregations, counts, trends, or analytical queries about the data (e.g., "how many safety incidents", "total throughput last month").
+- metrics: Questions asking for specific numbers, aggregations, counts, trends, or analytical queries about the data.
 - qa: Questions about data governance, access policies, how to request data, FAQs about the data catalog, or general knowledge questions.
 - general: Greetings, small talk, clarifications, or anything that doesn't fit the above categories.
 
@@ -91,7 +93,7 @@ class Orchestrator:
             response = await client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": CLASSIFY_PROMPT},
+                    {"role": "system", "content": get_prompts().get("classify", DEFAULT_CLASSIFY_PROMPT)},
                     {"role": "user", "content": last_user_msg},
                 ],
                 max_tokens=16,
@@ -115,12 +117,13 @@ class Orchestrator:
         client = get_llm_client()
         model = os.environ.get("SERVING_ENDPOINT", "databricks-claude-opus-4-6")
 
-        system = (
+        default_general = (
             "You are the UC Data Advisor, a helpful assistant for discovering and understanding "
-            "datasets in Unity Catalog at Enbridge. Respond warmly and briefly. If the user seems "
+            "datasets in Unity Catalog. Respond warmly and briefly. If the user seems "
             "to need data help, let them know you can help find datasets, explore table structures, "
             "and answer questions about the data catalog."
         )
+        system = get_prompts().get("general", default_general)
 
         response = await client.chat.completions.create(
             model=model,

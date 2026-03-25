@@ -97,6 +97,17 @@ async def submit_feedback(request: FeedbackRequest):
     return FeedbackResponse(status="ok")
 
 
+@router.get("/ui-config")
+async def get_ui_config():
+    """Return UI configuration (header subtitle, suggestion questions)."""
+    from ..advisor_config import get_ui
+    ui = get_ui()
+    return {
+        "header_subtitle": ui.get("header_subtitle", "Unity Catalog"),
+        "suggestions": ui.get("suggestions", ["What catalogs are available?"]),
+    }
+
+
 @router.get("/history/{session_id}")
 async def get_history(session_id: str):
     """Retrieve conversation history for a session."""

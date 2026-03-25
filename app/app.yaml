@@ -10,20 +10,20 @@ command:
 
 env:
   - name: SERVING_ENDPOINT
-    value: uc-advisor-llm
+    value: acao-accuweather-advisor-llm
   - name: GENIE_SPACE_ID
-    value: "01f12172a9361d4ebf8761f3ba61bc65"
+    value: "01f128725a3c195abcd1ed65e67ab345"
   - name: VS_INDEX_METADATA
-    value: "uc_data_advisor.default.uc_metadata_vs_index"
+    value: "acao_accuweather_advisor_catalog.default.uc_metadata_vs_index"
   - name: VS_INDEX_KNOWLEDGE
-    value: "uc_data_advisor.default.knowledge_vs_index"
+    value: "acao_accuweather_advisor_catalog.default.knowledge_vs_index"
   - name: PGHOST
-    value: "instance-3f63074d-cb71-45fe-84e8-d37b31013f7c.database.cloud.databricks.com"
+    value: "ep-lingering-unit-d2bshwfp.database.us-east-1.cloud.databricks.com"
   - name: PGPORT
     value: "5432"
   - name: PGDATABASE
-    value: "uc_advisor_sessions"
+    value: "acao_accuweather_advisor_sessions"
   - name: PGUSER
-    value: "03e2f707-ee86-4ed4-adea-28a6e792c82f"
+    value: "e1661074-468c-4d8e-9289-5773fd6bd6c0"
   - name: LAKEBASE_INSTANCE
-    value: "uc-advisor-sessions"
+    value: "acao-accuweather-advisor-sessions"

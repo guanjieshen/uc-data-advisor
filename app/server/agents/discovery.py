@@ -3,6 +3,7 @@
 from .base import ResponsesBaseAgent
 from ..uc_tools import execute_tool as uc_execute_tool
 from ..tools.vector_search import semantic_search_tables
+from ..advisor_config import get_prompts
 
 UC_TOOLS = [
     {
@@ -104,7 +105,7 @@ UC_TOOLS = [
     },
 ]
 
-SYSTEM_PROMPT = """You are the Data Discovery Agent for UC Data Advisor at Enbridge.
+DEFAULT_DISCOVERY_PROMPT = """You are the Data Discovery Agent for UC Data Advisor.
 
 You help users find datasets, understand table structures, and navigate the Unity Catalog. You have access to tools that let you browse UC metadata.
 
@@ -116,20 +117,16 @@ Key behaviors:
 - Provide clear, concise answers about what data is available and how it's organized
 - If you're not sure which catalog or schema to look in, search across all of them
 - Always mention the fully qualified table name (catalog.schema.table) so users can reference it
-- When describing tables, highlight the most important columns and what the table is used for
-
-The workspace contains operational data for a midstream oil & gas pipeline company (Enbridge), including:
-- Pipeline monitoring and sensor data
-- Gas processing plant operations
-- Safety and compliance records
-- Commercial contracts and nominations
-- Market data and forecasts"""
+- When describing tables, highlight the most important columns and what the table is used for"""
 
 
 class DiscoveryAgent(ResponsesBaseAgent):
     name = "discovery"
-    system_prompt = SYSTEM_PROMPT
     tools = UC_TOOLS
+
+    @property
+    def system_prompt(self):
+        return get_prompts().get("discovery", DEFAULT_DISCOVERY_PROMPT)
 
     def execute_tool(self, name: str, args: dict) -> dict | list:
         if name == "semantic_search_tables":

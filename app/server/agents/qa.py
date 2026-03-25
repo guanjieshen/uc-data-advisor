@@ -2,6 +2,7 @@
 
 from .base import ResponsesBaseAgent
 from ..tools.knowledge_search import search_knowledge_base
+from ..advisor_config import get_prompts
 
 KNOWLEDGE_TOOL = [
     {
@@ -23,7 +24,7 @@ KNOWLEDGE_TOOL = [
     },
 ]
 
-SYSTEM_PROMPT = """You are the Q&A Agent for UC Data Advisor at Enbridge.
+DEFAULT_QA_PROMPT = """You are the Q&A Agent for UC Data Advisor.
 
 You answer questions about data governance, access policies, and how to use the data catalog. You search a curated knowledge base of FAQs and documentation.
 
@@ -39,13 +40,16 @@ Topics you cover:
 - Data governance policies and compliance
 - How to use Unity Catalog features
 - Data quality and lineage questions
-- General questions about the Enbridge data platform"""
+- General questions about the data platform"""
 
 
 class QAAgent(ResponsesBaseAgent):
     name = "qa"
-    system_prompt = SYSTEM_PROMPT
     tools = KNOWLEDGE_TOOL
+
+    @property
+    def system_prompt(self):
+        return get_prompts().get("qa", DEFAULT_QA_PROMPT)
 
     def execute_tool(self, name: str, args: dict) -> dict | list:
         if name == "search_knowledge_base":

@@ -296,19 +296,15 @@
       <line x1="12" y1="22.08" x2="12" y2="12"/>
     </svg>
     <h1>UC Data Advisor</h1>
-    <span>Enbridge Unity Catalog</span>
+    <span id="header-subtitle">Unity Catalog</span>
   </header>
 
   <div id="chat-container">
     <div id="welcome">
       <h2>What data are you looking for?</h2>
       <p>I can help you discover datasets, explore table schemas, and understand what data is available in Unity Catalog.</p>
-      <div class="suggestions">
+      <div class="suggestions" id="suggestions">
         <button class="suggestion" onclick="sendSuggestion(this)">What catalogs are available?</button>
-        <button class="suggestion" onclick="sendSuggestion(this)">Show me pipeline sensor data</button>
-        <button class="suggestion" onclick="sendSuggestion(this)">Do we have safety incident records?</button>
-        <button class="suggestion" onclick="sendSuggestion(this)">What commodity price data exists?</button>
-        <button class="suggestion" onclick="sendSuggestion(this)">Describe the nominations table</button>
       </div>
     </div>
   </div>
@@ -339,6 +335,22 @@
       sessionId = crypto.randomUUID();
       sessionStorage.setItem('uc-advisor-session', sessionId);
     }
+
+    // Load UI config (suggestions, header subtitle)
+    (async function loadUiConfig() {
+      try {
+        const res = await fetch('/api/ui-config');
+        if (!res.ok) return;
+        const config = await res.json();
+        document.getElementById('header-subtitle').textContent = config.header_subtitle || 'Unity Catalog';
+        const container = document.getElementById('suggestions');
+        if (config.suggestions && config.suggestions.length) {
+          container.innerHTML = config.suggestions
+            .map(s => `<button class="suggestion" onclick="sendSuggestion(this)">${s}</button>`)
+            .join('');
+        }
+      } catch (e) { /* config endpoint not available, keep defaults */ }
+    })();
 
     // Restore conversation history on load
     (async function restoreHistory() {

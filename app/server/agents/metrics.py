@@ -2,6 +2,7 @@
 
 from .base import ResponsesBaseAgent
 from ..tools.genie import query_genie
+from ..advisor_config import get_prompts
 
 GENIE_TOOL = [
     {
@@ -23,7 +24,7 @@ GENIE_TOOL = [
     },
 ]
 
-SYSTEM_PROMPT = """You are the Data Metrics Agent for UC Data Advisor at Enbridge.
+DEFAULT_METRICS_PROMPT = """You are the Data Metrics Agent for UC Data Advisor.
 
 You answer analytical questions by querying real data through the Genie Space. You specialize in:
 - Counts, aggregations, and summaries (e.g., "how many...", "total...", "average...")
@@ -35,20 +36,16 @@ Key behaviors:
 - If Genie returns SQL, briefly explain what it queried
 - Present data results clearly, using tables or bullet points
 - If the query fails, suggest how the user might rephrase their question
-- Always cite that the data comes from the Enbridge Unity Catalog
-
-The workspace contains operational data for a midstream oil & gas pipeline company (Enbridge), including:
-- Pipeline monitoring and sensor data
-- Gas processing plant operations
-- Safety and compliance records
-- Commercial contracts and nominations
-- Market data and forecasts"""
+- Always cite that the data comes from Unity Catalog"""
 
 
 class MetricsAgent(ResponsesBaseAgent):
     name = "metrics"
-    system_prompt = SYSTEM_PROMPT
     tools = GENIE_TOOL
+
+    @property
+    def system_prompt(self):
+        return get_prompts().get("metrics", DEFAULT_METRICS_PROMPT)
 
     def execute_tool(self, name: str, args: dict) -> dict | list:
         if name == "query_genie":

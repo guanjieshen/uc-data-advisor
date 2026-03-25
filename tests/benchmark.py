@@ -1,82 +1,58 @@
 #!/usr/bin/env python3
-"""Benchmark suite for UC Data Advisor deployed app."""
+"""Benchmark suite for UC Data Advisor deployed app.
+
+Loads benchmark questions and app URL from config/advisor_config.yaml.
+Override with env vars: APP_URL, DATABRICKS_PROFILE.
+"""
 
 import json
+import os
+import sys
 import time
 import subprocess
 import requests
+import yaml
 
-APP_URL = "https://uc-data-advisor-7474649275991072.aws.databricksapps.com"
+# Load config
+CONFIG_PATH = os.environ.get(
+    "ADVISOR_CONFIG_PATH",
+    os.path.join(os.path.dirname(__file__), "..", "config", "advisor_config.yaml"),
+)
+try:
+    with open(CONFIG_PATH) as f:
+        _config = yaml.safe_load(f) or {}
+except FileNotFoundError:
+    print(f"Config not found at {CONFIG_PATH}, using defaults")
+    _config = {}
+
+_infra = _config.get("infrastructure", {})
+_generated = _config.get("generated", {})
+_workspace = _config.get("workspace", {})
+
+# App URL: env var > config > fallback
+APP_URL = os.environ.get("APP_URL", "")
+if not APP_URL and _infra.get("app_name"):
+    # User must set APP_URL since it depends on workspace-assigned subdomain
+    print("Set APP_URL env var to the deployed app URL")
+    sys.exit(1)
+
 CHAT_ENDPOINT = f"{APP_URL}/api/chat"
+PROFILE = os.environ.get("DATABRICKS_PROFILE", _workspace.get("profile", ""))
 
-# Get token from Databricks CLI
+
 def get_token():
-    result = subprocess.run(
-        ["databricks", "auth", "token", "-p", "enbridge", "-o", "json"],
-        capture_output=True, text=True,
-    )
+    cmd = ["databricks", "auth", "token", "-o", "json"]
+    if PROFILE:
+        cmd += ["-p", PROFILE]
+    result = subprocess.run(cmd, capture_output=True, text=True)
     return json.loads(result.stdout)["access_token"]
 
-BENCHMARKS = [
-    # Discovery agent questions
-    {
-        "question": "What catalogs are available in the workspace?",
-        "expected_agent": "discovery",
-        "expect_contains": ["catalog"],
-        "category": "discovery",
-    },
-    {
-        "question": "Do we have any data about pipeline safety incidents?",
-        "expected_agent": "discovery",
-        "expect_contains": [],
-        "category": "discovery",
-    },
-    {
-        "question": "Show me the columns in the nominations table",
-        "expected_agent": "discovery",
-        "expect_contains": [],
-        "category": "discovery",
-    },
-    # Metrics agent questions
-    {
-        "question": "How many safety incidents were recorded in total?",
-        "expected_agent": "metrics",
-        "expect_contains": [],
-        "category": "metrics",
-    },
-    {
-        "question": "What is the total pipeline throughput?",
-        "expected_agent": "metrics",
-        "expect_contains": [],
-        "category": "metrics",
-    },
-    # QA agent questions
-    {
-        "question": "How do I request access to a dataset?",
-        "expected_agent": "qa",
-        "expect_contains": [],
-        "category": "qa",
-    },
-    {
-        "question": "What data quality checks are in place?",
-        "expected_agent": "qa",
-        "expect_contains": [],
-        "category": "qa",
-    },
-    {
-        "question": "What is Unity Catalog and how is data organized?",
-        "expected_agent": "qa",
-        "expect_contains": [],
-        "category": "qa",
-    },
-    # General / greeting
-    {
-        "question": "Hello, what can you help me with?",
-        "expected_agent": "general",
-        "expect_contains": [],
-        "category": "general",
-    },
-]
+
+# Load benchmarks from config or use defaults
+BENCHMARKS = _generated.get("benchmarks", [
+    {"question": "What catalogs are available in the workspace?", "expected_agent": "discovery", "expect_contains": ["catalog"], "category": "discovery"},
+    {"question": "Hello, what can you help me with?", "expected_agent": "general", "expect_contains": [], "category": "general"},
+])
 
 
 def run_benchmark():

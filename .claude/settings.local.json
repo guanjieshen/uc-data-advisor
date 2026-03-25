@@ -36,7 +36,17 @@
       "Bash(databricks jobs list:*)",
       "Bash(python3:*)",
       "WebFetch(domain:claude.ai)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "WebSearch",
+      "mcp__chrome-devtools__navigate_page",
+      "mcp__chrome-devtools__take_screenshot",
+      "mcp__chrome-devtools__take_snapshot",
+      "mcp__chrome-devtools__fill",
+      "mcp__chrome-devtools__click",
+      "mcp__chrome-devtools__wait_for",
+      "mcp__chrome-devtools__evaluate_script",
+      "WebFetch(domain:docs.databricks.com)",
+      "WebFetch(domain:pypi.org)"
     ]
   }
 }
