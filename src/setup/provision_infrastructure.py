@@ -395,20 +395,23 @@ def _create_serving_endpoint(w, infra: dict, app_name: str, serving_model: str, 
         ],
     }
 
-    if (config or {}).get("enable_ai_gateway", True):
-        body["ai_gateway"] = {
-            "usage_tracking_config": {"enabled": True},
-            "rate_limits": [
-                {"calls": 120, "key": "user", "renewal_period": "minute"},
-                {"calls": 500, "key": "endpoint", "renewal_period": "minute"},
-            ],
-            "guardrails": {
-                "input": {"safety": True, "pii": {"behavior": "NONE"}},
-                "output": {"safety": False, "pii": {"behavior": "NONE"}},
-            },
+    ai_gateway = {
+        "usage_tracking_config": {"enabled": True},
+        "rate_limits": [
+            {"calls": 120, "key": "user", "renewal_period": "minute"},
+            {"calls": 500, "key": "endpoint", "renewal_period": "minute"},
+        ],
+    }
+
+    if (config or {}).get("enable_ai_gateway_guardrails", True):
+        ai_gateway["guardrails"] = {
+            "input": {"safety": True, "pii": {"behavior": "NONE"}},
+            "output": {"safety": False, "pii": {"behavior": "NONE"}},
         }
     else:
-        print("(AI Gateway disabled)...", end=" ", flush=True)
+        print("(guardrails disabled)...", end=" ", flush=True)
+
+    body["ai_gateway"] = ai_gateway
 
     api.do("POST", "/api/2.0/serving-endpoints", body=body)
     print("created (READY)")
