@@ -7,7 +7,7 @@ Deploy a multi-agent Unity Catalog data advisor for any Databricks workspace. Th
 - **Databricks workspace** with Unity Catalog enabled
 - **Databricks CLI** installed and authenticated (`databricks auth login --profile <name>`)
 - **Python 3.12+** with `uv` installed
-- **psql** (PostgreSQL client) for Lakebase grants — `brew install postgresql` or equivalent
+- **psql** (PostgreSQL client) for Lakebase database creation and grants
 - **Source data catalogs** already populated in Unity Catalog with table/column descriptions
 - Deployer must have **workspace admin** or equivalent permissions to create catalogs, endpoints, and apps
 
@@ -48,29 +48,32 @@ APP_URL="https://your-app-url.aws.databricksapps.com" uv run python tests/benchm
 
 ## What the Setup Pipeline Does
 
-The pipeline runs 4 steps in sequence:
+The pipeline runs 4 stages in sequence: **provision → audit → generate → deploy**.
 
-### Step 1: Provision Infrastructure
+### Stage 1: Provision Infrastructure
+
 Creates all Databricks resources (idempotent — safe to re-run):
 
-| Resource | How Created |
-|----------|-------------|
-| **SQL Warehouse** | Discovers first available serverless warehouse |
-| **Advisor Catalog** | `CREATE CATALOG IF NOT EXISTS uc_data_advisor` |
-| **Vector Search Endpoint** | SDK `create_endpoint()`, polls until ONLINE |
-| **Lakebase Instance** | SDK `create_database_instance()`, creates database, adds SP role |
-| **Serving Endpoint** | External model with AI Gateway (rate limits, usage tracking, guardrails) |
-| **Secret Scope** | Stores PAT for serving endpoint proxy auth |
-| **Genie Space** | REST API, populated with tables in deploy step |
-| **Databricks App** | Created if not exists |
+| Step | Resource | How Created |
+|------|----------|-------------|
+| 1 | **SQL Warehouse** | Discovers first available serverless warehouse |
+| 2 | **Advisor Catalog** | `CREATE CATALOG IF NOT EXISTS {app_name}_catalog` |
+| 3 | **Vector Search Endpoint** | SDK `create_endpoint()`, polls until ONLINE |
+| 4 | **Lakebase Instance** | SDK `create_database_instance()`, creates database via `psql`, adds SP role |
+| 5 | **Serving Endpoint** | External model with AI Gateway (rate limits, usage tracking, input guardrails) |
+| 6 | **Genie Space** | REST API `POST /api/2.0/genie/spaces`, populated with tables in deploy stage |
+| 7 | **Databricks App** | Created via CLI, captures auto-created service principal |
+| 8 | **Permissions** | Grants UC, serving, and Lakebase access to both the configured identity and the app's auto-created SP |
 
-### Step 2: Audit Metadata
+### Stage 2: Audit Metadata
+
 Walks your source catalogs via the Databricks SDK:
 - Collects catalog/schema/table/column names, types, comments, owners
 - Computes metadata description coverage percentage
 - Stores full audit in `config.generated.audit`
 
-### Step 3: Generate Content
+### Stage 3: Generate Content
+
 From the audit, auto-generates:
 
 | Artifact | Source | Algorithm |
@@ -82,20 +85,23 @@ From the audit, auto-generates:
 | **UI suggestions** | Notable table names | Top tables with comments |
 | **Genie Space tables** | Source tables + materialized metric tables | Sorted identifiers |
 
-### Step 4: Deploy Artifacts
-- Writes metadata docs to Delta table + creates VS index
-- Writes knowledge base FAQ to Delta table + creates VS index
-- Creates Databricks Metric Views via SQL
-- Materializes metric tables for Genie Space
-- Updates Genie Space table list
-- Generates `app.yaml` from infrastructure config
-- Uploads app files + deploys Databricks App
+Metric views are only generated when `enable_metric_views: true` is set in the config.
+
+### Stage 4: Deploy Artifacts
+
+1. Writes metadata docs to Delta table + creates Vector Search index (delta sync, triggered)
+2. Writes knowledge base FAQ to Delta table + creates Vector Search index (delta sync, triggered)
+3. Creates Databricks Metric Views via SQL (if enabled)
+4. Materializes metric tables for Genie Space (if enabled)
+5. Updates Genie Space table list via `PATCH /api/2.0/genie/spaces/{space_id}`
+6. Generates `app.yaml` from infrastructure config
+7. Uploads app files to workspace + deploys Databricks App
 
 ## App Identity
 
 ### Service Principal (recommended)
 
-The setup script auto-grants all permissions — zero manual steps.
+The setup script auto-grants all permissions to both the configured SP and the app's auto-created SP — zero manual steps.
 
 ```yaml
 app_identity:
@@ -104,7 +110,7 @@ app_identity:
 ```
 
 Permissions auto-granted:
-- `USE CATALOG` + `SELECT` on each source catalog
+- `USE CATALOG` + `SELECT` on each source catalog (+ `USE SCHEMA` per schema)
 - `ALL PRIVILEGES` on advisor catalog
 - `CAN_QUERY` on serving endpoint
 - Lakebase instance role + database grants
@@ -125,7 +131,7 @@ cat config/.generated/required_grants.sql
 # Copy and run in a SQL editor as a metastore admin
 ```
 
-## Running Individual Steps
+## Running Individual Stages
 
 ```bash
 uv run python -m src.setup.run --config config/my_config.yaml --step provision
@@ -145,6 +151,7 @@ advisor_catalog: my_project_catalog    # Default: {app_name}_catalog
 external_location: "my-ext-loc-name"   # UC external location name for catalog storage (auto-detected if omitted)
 serving_model: databricks-claude-opus-4-6  # Upstream foundation model
 embedding_model: databricks-bge-large-en   # VS embedding model
+enable_metric_views: false             # Set to true to generate metric views and materialized tables
 include_schemas: []                    # Restrict to specific schemas
 exclude_schemas: [staging, temp]       # Skip these schemas
 ```
@@ -184,7 +191,26 @@ User → Databricks App (FastAPI)
     Unity Catalog (source data)
 ```
 
-All LLM calls go through a dedicated serving endpoint with AI Gateway (rate limiting, usage tracking, input safety guardrails).
+- **Serving Endpoint**: All LLM calls (classification + agent reasoning) go through a dedicated endpoint with AI Gateway (rate limiting, usage tracking, input safety guardrails)
+- **Genie Space**: The Metrics agent sends natural language questions to Genie, which translates to SQL and returns results. Only accepts base tables, not metric views — hence the materialization step.
+- **Vector Search**: Discovery agent uses a metadata VS index for semantic table search. QA agent uses a knowledge base VS index for FAQ retrieval. Both are delta sync (triggered) — sync manually after updating source tables.
+- **Lakebase**: Stores conversation history and feedback for session persistence.
+
+## Updating After Deployment
+
+To sync Vector Search indexes after source table changes:
+```python
+from databricks.sdk import WorkspaceClient
+w = WorkspaceClient()
+w.vector_search_indexes.sync_index(index_name="catalog.schema.index_name")
+```
+
+Or via the UI: **Catalog → navigate to source table → Indexes tab → click index → Sync**.
+
+To add tables to the Genie Space, re-run the deploy stage:
+```bash
+uv run python -m src.setup.run --config config/my_config.yaml --step deploy
+```
 
 ## Troubleshooting
 
@@ -194,6 +220,8 @@ All LLM calls go through a dedicated serving endpoint with AI Gateway (rate limi
 
 **Lakebase connection refused**: Check that the Lakebase instance is `AVAILABLE` and that the app identity has been added as an instance role.
 
-**Metric views fail to create**: Metric views require specific YAML syntax. Check the generated SQL in `config.generated.metric_views` for any invalid column references.
+**Metric views fail to create**: Metric views require specific YAML syntax. Check the generated SQL in `config.generated.metric_views` for any invalid column references. Ensure `enable_metric_views: true` is set.
 
-**Genie Space not accepting tables**: Genie only accepts base tables (not views). The setup generates materialized tables for Genie consumption.
+**Genie Space not accepting tables**: Genie only accepts base tables (not views or metric views). The setup generates materialized tables from metric views for Genie consumption.
+
+**App deploy fails**: Ensure the Databricks CLI is authenticated with the correct profile. Check `databricks apps get <app-name>` for status.
