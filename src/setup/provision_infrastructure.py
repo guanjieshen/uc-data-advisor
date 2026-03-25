@@ -220,7 +220,7 @@ def _create_vs_endpoint(w, infra: dict, app_name: str) -> str:
         for _ in range(60):
             time.sleep(10)
             ep = w.vector_search_endpoints.get_endpoint(vs_name)
-            if ep.endpoint_status.state == "ONLINE":
+            if "ONLINE" in str(ep.endpoint_status.state).upper():
                 print("ONLINE")
                 return vs_name
         print("still provisioning (may take a few minutes)")
