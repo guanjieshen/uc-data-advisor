@@ -73,7 +73,7 @@ def provision(config: dict, w) -> dict:
     _create_lakebase(w, infra, app_name, identity)
 
     # Step 5: Create serving endpoint with AI Gateway
-    infra["serving_endpoint"] = _create_serving_endpoint(w, infra, app_name, serving_model)
+    infra["serving_endpoint"] = _create_serving_endpoint(w, infra, app_name, serving_model, config)
     infra["secret_scope"] = app_name
 
     # Step 6: Create Genie Space
@@ -343,7 +343,7 @@ def _add_lakebase_role(w, instance_name: str, principal_name: str, identity_type
 # Step 5: Serving endpoint with AI Gateway
 # ---------------------------------------------------------------------------
 
-def _create_serving_endpoint(w, infra: dict, app_name: str, serving_model: str) -> str:
+def _create_serving_endpoint(w, infra: dict, app_name: str, serving_model: str, config: dict = None) -> str:
     """Create an external model endpoint with AI Gateway config."""
     ep_name = infra.get("serving_endpoint", f"{app_name}-llm")
     scope_name = app_name
@@ -395,7 +395,7 @@ def _create_serving_endpoint(w, infra: dict, app_name: str, serving_model: str) 
         ],
     }
 
-    if config.get("enable_ai_gateway", True):
+    if (config or {}).get("enable_ai_gateway", True):
         body["ai_gateway"] = {
             "usage_tracking_config": {"enabled": True},
             "rate_limits": [
