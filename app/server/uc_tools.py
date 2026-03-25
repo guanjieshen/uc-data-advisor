@@ -1,7 +1,11 @@
-"""Unity Catalog metadata tool implementations."""
+"""Unity Catalog metadata tool implementations.
+
+All operations are scoped to the source_catalogs defined in the advisor config.
+"""
 
 from databricks.sdk import WorkspaceClient
 from .config import get_workspace_client
+from .advisor_config import get_config
 
 _client: WorkspaceClient | None = None
 
@@ -11,6 +15,11 @@ def _get_client() -> WorkspaceClient:
     if _client is None:
         _client = get_workspace_client()
     return _client
+
+
+def _allowed_catalogs() -> set[str]:
+    """Get the set of source catalogs this deployment is scoped to."""
+    return set(get_config().get("source_catalogs", []))
 
 
 def execute_tool(name: str, args: dict) -> dict | list:
@@ -30,18 +39,25 @@ def execute_tool(name: str, args: dict) -> dict | list:
 
 def _list_catalogs() -> list[dict]:
     client = _get_client()
+    allowed = _allowed_catalogs()
     results = []
     for cat in client.catalogs.list():
-        if cat.name and not cat.name.startswith("__"):
-            results.append({
-                "name": cat.name,
-                "comment": cat.comment or "",
-                "owner": cat.owner or "",
-            })
+        if not cat.name or cat.name.startswith("__"):
+            continue
+        if allowed and cat.name not in allowed:
+            continue
+        results.append({
+            "name": cat.name,
+            "comment": cat.comment or "",
+            "owner": cat.owner or "",
+        })
     return results
 
 
 def _list_schemas(catalog_name: str) -> list[dict]:
+    allowed = _allowed_catalogs()
+    if allowed and catalog_name not in allowed:
+        return [{"error": f"Catalog '{catalog_name}' is not in the configured source catalogs."}]
     client = _get_client()
     results = []
     for schema in client.schemas.list(catalog_name=catalog_name):
@@ -55,6 +71,9 @@ def _list_schemas(catalog_name: str) -> list[dict]:
 
 
 def _list_tables(catalog_name: str, schema_name: str) -> list[dict]:
+    allowed = _allowed_catalogs()
+    if allowed and catalog_name not in allowed:
+        return [{"error": f"Catalog '{catalog_name}' is not in the configured source catalogs."}]
     client = _get_client()
     results = []
     for table in client.tables.list(
@@ -70,6 +89,10 @@ def _list_tables(catalog_name: str, schema_name: str) -> list[dict]:
 
 
 def _get_table_details(full_name: str) -> dict:
+    allowed = _allowed_catalogs()
+    catalog_name = full_name.split(".")[0] if "." in full_name else ""
+    if allowed and catalog_name not in allowed:
+        return {"error": f"Catalog '{catalog_name}' is not in the configured source catalogs."}
     client = _get_client()
     try:
         table = client.tables.get(full_name=full_name)
@@ -98,13 +121,16 @@ def _get_table_details(full_name: str) -> dict:
 
 
 def _search_tables(query: str) -> list[dict]:
-    """Search for tables matching a keyword across all catalogs."""
+    """Search for tables matching a keyword across configured source catalogs."""
     client = _get_client()
+    allowed = _allowed_catalogs()
     query_lower = query.lower()
     matches = []
 
     for cat in client.catalogs.list():
         if not cat.name or cat.name.startswith("__") or cat.name in ("system", "samples"):
+            continue
+        if allowed and cat.name not in allowed:
             continue
         try:
             for schema in client.schemas.list(catalog_name=cat.name):

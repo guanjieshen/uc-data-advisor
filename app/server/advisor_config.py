@@ -18,16 +18,24 @@ def _load() -> dict:
     """Load config from YAML file. Cached after first call."""
     import yaml
 
-    config_path = os.environ.get(
-        "ADVISOR_CONFIG_PATH",
-        str(Path(__file__).parent.parent.parent / "config" / "advisor_config.yaml"),
-    )
-    try:
-        with open(config_path) as f:
-            return yaml.safe_load(f) or {}
-    except Exception as e:
-        logger.warning(f"Failed to load advisor config from {config_path}: {e}")
-        return {}
+    # Search paths: env var > app/config/ > project_root/config/
+    candidates = [
+        os.environ.get("ADVISOR_CONFIG_PATH", ""),
+        str(Path(__file__).parent.parent / "config" / "advisor_config.yaml"),  # app/config/
+        str(Path(__file__).parent.parent.parent / "config" / "advisor_config.yaml"),  # project/config/
+        "config/advisor_config.yaml",  # cwd
+    ]
+    for config_path in candidates:
+        if config_path and os.path.exists(config_path):
+            try:
+                with open(config_path) as f:
+                    data = yaml.safe_load(f) or {}
+                    logger.info(f"Loaded advisor config from {config_path}")
+                    return data
+            except Exception as e:
+                logger.warning(f"Failed to load config from {config_path}: {e}")
+    logger.warning("No advisor config found, using defaults")
+    return {}
 
 
 def get_config() -> dict[str, Any]:

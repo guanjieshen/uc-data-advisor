@@ -351,8 +351,13 @@ env:
     if result.returncode != 0:
         return
 
-    # Upload config alongside the app
+    # Upload config as advisor_config.yaml (the app expects this name)
+    import shutil
     config_dir = os.path.join(os.path.dirname(__file__), "..", "..", "config")
+    config_src = config.get("_config_path", os.path.join(config_dir, "advisor_config.yaml"))
+    config_dest = os.path.join(config_dir, "advisor_config.yaml")
+    if os.path.abspath(config_src) != os.path.abspath(config_dest):
+        shutil.copy2(config_src, config_dest)
     _cli(["workspace", "import-dir", config_dir, f"{workspace_path}/config", "--overwrite"], "config upload")
 
     # Step 3: Deploy the app
