@@ -26,7 +26,7 @@ def _derive_app_name(config: dict) -> str:
     catalogs = config.get("source_catalogs", [])
     if not catalogs:
         return "uc-data-advisor"
-    # Find common prefix, e.g. ["enbridge_operations", "enbridge_commercial"] -> "enbridge"
+    # Find common prefix, e.g. ["acme_operations", "acme_commercial"] -> "acme"
     parts_list = [name.split("_") for name in catalogs]
     common = []
     for i, part in enumerate(parts_list[0]):
