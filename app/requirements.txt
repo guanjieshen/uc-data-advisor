@@ -5,5 +5,4 @@ databricks-sdk>=0.99.0
 pydantic>=2.0.0
 mlflow>=3.10.1
 asyncpg>=0.29.0
-databricks-vectorsearch>=0.40
 pyyaml>=6.0
