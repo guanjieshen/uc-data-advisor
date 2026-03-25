@@ -189,7 +189,7 @@ def _build_metric_view_sql(view_fqn, comment, source, dimensions, measures, join
         for j in joins:
             yaml_lines.append(f"  - name: {j['name']}")
             yaml_lines.append(f"    source: {j['source']}")
-            yaml_lines.append(f"    using:")
+            yaml_lines.append("    using:")
             for col in j["using"]:
                 yaml_lines.append(f"      - {col}")
 

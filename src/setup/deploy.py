@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 def deploy(config: dict, w) -> None:
     """Deploy all generated artifacts."""
     infra = config.get("infrastructure", {})
-    generated = config.get("generated", {})
+    config.get("generated", {})
     warehouse_id = infra.get("warehouse_id", "")
 
     print("=" * 60)
@@ -93,7 +93,7 @@ def _deploy_metadata_table(config, w, warehouse_id):
             f"Catalog: {tbl['catalog_name']}",
             f"Schema: {tbl['catalog_name']}.{tbl['schema_name']}",
             f"Description: {tbl.get('comment', '')}",
-            f"Columns:\n" + "\n".join(col_descs),
+            "Columns:\n" + "\n".join(col_descs),
         ])
 
         doc_id = hashlib.md5(tbl["full_name"].encode()).hexdigest()[:16]
@@ -266,7 +266,7 @@ def _deploy_app(config, w):
     identity = config.get("app_identity", {})
     lb = infra.get("lakebase", {})
 
-    print(f"  [app] Generating app.yaml...")
+    print("  [app] Generating app.yaml...")
 
     app_yaml = f"""command:
   - "python"
@@ -389,7 +389,7 @@ def _create_vs_index(w, index_name, endpoint_name, source_table, primary_key, em
 
     # Delete existing and wait for full deletion
     try:
-        existing = w.vector_search_indexes.get_index(index_name)
+        w.vector_search_indexes.get_index(index_name)
         w.vector_search_indexes.delete_index(index_name)
         print("deleting old...", end=" ", flush=True)
         for _ in range(60):

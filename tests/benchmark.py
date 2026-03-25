@@ -159,7 +159,7 @@ def run_benchmark():
     print(f"Routing accuracy: {routing_correct}/{len(results)} ({100*routing_correct/len(results):.0f}%)")
     print(f"Total time: {total_time:.1f}s | Avg: {total_time/len(results):.1f}s | Min: {min(times):.1f}s | Max: {max(times):.1f}s")
 
-    print(f"\nPer-category breakdown:")
+    print("\nPer-category breakdown:")
     for cat in ["discovery", "metrics", "qa", "general"]:
         cat_results = [r for r in results if r["category"] == cat]
         if not cat_results:

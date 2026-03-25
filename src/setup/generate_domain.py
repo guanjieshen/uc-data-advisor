@@ -1,6 +1,5 @@
 """Infer organization name and domain context from catalog metadata."""
 
-import re
 
 
 def generate_domain(config: dict) -> dict:

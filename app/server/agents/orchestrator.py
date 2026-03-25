@@ -101,7 +101,7 @@ class Orchestrator:
             )
         except BadRequestError as e:
             if "guardrail_triggered" in str(e):
-                logger.warning(f"Guardrail triggered during classification, defaulting to discovery")
+                logger.warning("Guardrail triggered during classification, defaulting to discovery")
                 return "discovery"
             raise
 

@@ -12,7 +12,6 @@ Usage:
 
 import argparse
 import os
-import sys
 import logging
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")

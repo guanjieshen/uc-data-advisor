@@ -45,7 +45,7 @@ def provision(config: dict, w) -> dict:
     # All resource names are derived from app_name for uniqueness
     advisor_catalog = config.get("advisor_catalog", f"{app_name.replace('-', '_')}_catalog")
     serving_model = config.get("serving_model", "databricks-claude-opus-4-6")
-    embedding_model = config.get("embedding_model", "databricks-bge-large-en")
+    config.get("embedding_model", "databricks-bge-large-en")
     identity = config.get("app_identity", {"type": "service_principal", "name": ""})
 
     infra["app_name"] = app_name
@@ -604,7 +604,7 @@ def _grant_sp_permissions(w, infra, sp_id, source_catalogs, advisor_catalog, war
                 capture_output=True, text=True, timeout=30,
             )
             if result.returncode == 0:
-                print(f"    Granted Lakebase access")
+                print("    Granted Lakebase access")
             else:
                 logger.warning(f"Lakebase grants via psql: {result.stderr[:200]}")
         except FileNotFoundError:
