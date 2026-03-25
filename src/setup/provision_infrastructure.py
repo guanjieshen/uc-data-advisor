@@ -446,14 +446,22 @@ def _create_app(w, infra: dict, app_name: str, config: dict) -> None:
     """Create Databricks App and capture its auto-created SP."""
     import subprocess
 
-    profile = config.get("workspace", {}).get("profile", "")
+    workspace = config.get("workspace", {})
+    profile = workspace.get("profile", "")
+    token = workspace.get("token", "")
+    host = workspace.get("host", "")
     print(f"  [app] Creating app {app_name}...", end=" ", flush=True)
 
     def _cli(cmd_args):
         cmd = ["databricks"] + cmd_args
         if profile:
             cmd += ["-p", profile]
-        return subprocess.run(cmd, capture_output=True, text=True)
+        env = None
+        if token and host:
+            env = {**os.environ, "DATABRICKS_HOST": host, "DATABRICKS_TOKEN": token}
+        elif host and not profile:
+            env = {**os.environ, "DATABRICKS_HOST": host}
+        return subprocess.run(cmd, capture_output=True, text=True, env=env)
 
     # Check if app exists
     result = _cli(["apps", "get", app_name, "-o", "json"])

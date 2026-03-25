@@ -29,9 +29,19 @@ source_catalogs:
   - my_catalog_operations
   - my_catalog_analytics
 
+# Option A: authenticate with a CLI profile
 workspace:
   host: "https://my-workspace.cloud.databricks.com"
   profile: my-profile
+
+# Option B: authenticate with a PAT
+# workspace:
+#   host: "https://my-workspace.cloud.databricks.com"
+#   token: "dapi..."
+
+# Option C: host only — picks up auth from env vars or CLI default
+# workspace:
+#   host: "https://my-workspace.cloud.databricks.com"
 
 app_identity:
   type: service_principal

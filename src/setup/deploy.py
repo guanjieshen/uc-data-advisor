@@ -309,12 +309,19 @@ env:
     import subprocess
     workspace = config.get("workspace", {})
     profile = workspace.get("profile", "")
+    token = workspace.get("token", "")
+    host = workspace.get("host", "")
 
     def _cli(cmd_args, description=""):
         cmd = ["databricks"] + cmd_args
         if profile:
             cmd += ["-p", profile]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        env = None
+        if token and host:
+            env = {**os.environ, "DATABRICKS_HOST": host, "DATABRICKS_TOKEN": token}
+        elif host and not profile:
+            env = {**os.environ, "DATABRICKS_HOST": host}
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if result.returncode != 0:
             logger.warning(f"{description} failed: {result.stderr[:300]}")
         return result

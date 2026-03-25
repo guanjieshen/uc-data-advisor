@@ -29,10 +29,24 @@ def main():
     config = load_config(args.config)
     config["_config_path"] = args.config
 
-    # Set profile for SDK
-    profile = config.get("workspace", {}).get("profile", "")
-    if profile:
+    # Set auth for SDK — token, profile, host-only, or default
+    workspace = config.get("workspace", {})
+    profile = workspace.get("profile", "")
+    host = workspace.get("host", "")
+    token = workspace.get("token", "")
+
+    if token and host:
+        os.environ["DATABRICKS_HOST"] = host
+        os.environ["DATABRICKS_TOKEN"] = token
+        auth_method = f"PAT ({host})"
+    elif profile:
         os.environ["DATABRICKS_CONFIG_PROFILE"] = profile
+        auth_method = f"profile ({profile})"
+    elif host:
+        os.environ["DATABRICKS_HOST"] = host
+        auth_method = f"host-only ({host}) — using env/CLI auth"
+    else:
+        auth_method = "default (env/config)"
 
     from databricks.sdk import WorkspaceClient
     w = WorkspaceClient()
@@ -44,7 +58,7 @@ def main():
     print(f"  Config:   {args.config}")
     print(f"  Step:     {args.step}")
     print(f"  Catalogs: {config.get('source_catalogs', [])}")
-    print(f"  Profile:  {profile}")
+    print(f"  Auth:     {auth_method}")
     print()
 
     steps = {

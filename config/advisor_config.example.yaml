@@ -13,9 +13,19 @@ source_catalogs:
   - my_catalog_analytics
 
 # 2. Workspace connection (REQUIRED)
+# Option A: Use a Databricks CLI profile
 workspace:
   host: "https://my-workspace.cloud.databricks.com"
   profile: my-profile    # Databricks CLI profile name
+
+# Option B: Use a Personal Access Token (uncomment and remove profile above)
+# workspace:
+#   host: "https://my-workspace.cloud.databricks.com"
+#   token: "dapi..."     # Databricks PAT
+
+# Option C: Host only — uses existing env vars or CLI default auth
+# workspace:
+#   host: "https://my-workspace.cloud.databricks.com"
 
 # 3. App identity (REQUIRED)
 # Who the deployed app runs as.
