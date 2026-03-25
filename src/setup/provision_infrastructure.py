@@ -375,7 +375,7 @@ def _create_serving_endpoint(w, infra: dict, app_name: str, serving_model: str) 
 
     # Create the endpoint
     api = w.api_client
-    api.do("POST", "/api/2.0/serving-endpoints", body={
+    body = {
         "name": ep_name,
         "config": {
             "served_entities": [{
@@ -390,7 +390,13 @@ def _create_serving_endpoint(w, infra: dict, app_name: str, serving_model: str) 
                 },
             }],
         },
-        "ai_gateway": {
+        "tags": [
+            {"key": "app", "value": app_name},
+        ],
+    }
+
+    if config.get("enable_ai_gateway", True):
+        body["ai_gateway"] = {
             "usage_tracking_config": {"enabled": True},
             "rate_limits": [
                 {"calls": 120, "key": "user", "renewal_period": "minute"},
@@ -400,11 +406,11 @@ def _create_serving_endpoint(w, infra: dict, app_name: str, serving_model: str) 
                 "input": {"safety": True, "pii": {"behavior": "NONE"}},
                 "output": {"safety": False, "pii": {"behavior": "NONE"}},
             },
-        },
-        "tags": [
-            {"key": "app", "value": app_name},
-        ],
-    })
+        }
+    else:
+        print("(AI Gateway disabled)...", end=" ", flush=True)
+
+    api.do("POST", "/api/2.0/serving-endpoints", body=body)
     print("created (READY)")
     return ep_name
 
@@ -454,12 +460,12 @@ def _create_app(w, infra: dict, app_name: str, config: dict) -> None:
 
     def _cli(cmd_args):
         cmd = ["databricks"] + cmd_args
-        if profile:
-            cmd += ["-p", profile]
         env = None
         if token and host:
             env = {**os.environ, "DATABRICKS_HOST": host, "DATABRICKS_TOKEN": token}
-        elif host and not profile:
+        elif profile:
+            cmd += ["-p", profile]
+        elif host:
             env = {**os.environ, "DATABRICKS_HOST": host}
         return subprocess.run(cmd, capture_output=True, text=True, env=env)
 

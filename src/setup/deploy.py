@@ -314,12 +314,12 @@ env:
 
     def _cli(cmd_args, description=""):
         cmd = ["databricks"] + cmd_args
-        if profile:
-            cmd += ["-p", profile]
         env = None
         if token and host:
             env = {**os.environ, "DATABRICKS_HOST": host, "DATABRICKS_TOKEN": token}
-        elif host and not profile:
+        elif profile:
+            cmd += ["-p", profile]
+        elif host:
             env = {**os.environ, "DATABRICKS_HOST": host}
         result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if result.returncode != 0:
