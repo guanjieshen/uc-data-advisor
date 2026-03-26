@@ -1,0 +1,529 @@
+source_catalogs:
+- acao_bakehouse
+workspace:
+  host: https://fevm-enbridge.cloud.databricks.com
+app_identity:
+  type: user
+  name: allan.cao@databricks.com
+enable_metric_views: false
+enable_ai_gateway_guardrails: false
+infrastructure:
+  app_name: acao-bakehouse-advisor
+  advisor_catalog: acao_bakehouse_advisor_catalog
+  advisor_schema: default
+  warehouse_id: 23bf2a865893d648
+  vs_endpoint: acao-bakehouse-advisor-vs
+  lakebase:
+    instance: acao-bakehouse-advisor-sessions
+    port: 5432
+    host: ep-plain-bird-d26ibgh5.database.us-east-1.cloud.databricks.com
+    database: acao_bakehouse_advisor_sessions
+  serving_endpoint: acao-bakehouse-advisor-llm
+  secret_scope: acao-bakehouse-advisor
+  genie_space_id: 01f1288ced971d778457304365fdfdcd
+  app_sp_client_id: ce9a83a6-1c46-451a-99f1-769b8299af0e
+generated:
+  audit:
+    catalogs:
+    - name: acao_bakehouse
+      comment: The catalog focuses on data related to bakery operations and associated business processes. It typically includes
+        schemas covering inventory management, recipe databases, sales transactions, production schedules, and supply chain
+        information. Use this catalog for bakery production analytics, inventory tracking, sales reporting, and operational
+        efficiency analysis.
+      owner: allan.cao@databricks.com
+      schema_count: 1
+      table_count: 6
+    schemas:
+    - catalog_name: acao_bakehouse
+      name: bakehouse
+      full_name: acao_bakehouse.bakehouse
+      comment: ''
+      table_count: 6
+    tables:
+    - catalog_name: acao_bakehouse
+      schema_name: bakehouse
+      name: media_customer_reviews
+      full_name: acao_bakehouse.bakehouse.media_customer_reviews
+      comment: ''
+      table_type: MANAGED
+      columns:
+      - name: review
+        type: string
+        comment: ''
+        nullable: true
+      - name: franchiseID
+        type: bigint
+        comment: ''
+        nullable: true
+      - name: review_date
+        type: timestamp
+        comment: ''
+        nullable: true
+      - name: new_id
+        type: int
+        comment: ''
+        nullable: true
+    - catalog_name: acao_bakehouse
+      schema_name: bakehouse
+      name: media_gold_reviews_chunked
+      full_name: acao_bakehouse.bakehouse.media_gold_reviews_chunked
+      comment: ''
+      table_type: MANAGED
+      columns:
+      - name: franchiseID
+        type: int
+        comment: ''
+        nullable: true
+      - name: review_date
+        type: timestamp
+        comment: ''
+        nullable: true
+      - name: chunked_text
+        type: string
+        comment: ''
+        nullable: true
+      - name: chunk_id
+        type: string
+        comment: ''
+        nullable: true
+      - name: review_uri
+        type: string
+        comment: ''
+        nullable: true
+    - catalog_name: acao_bakehouse
+      schema_name: bakehouse
+      name: sales_customers
+      full_name: acao_bakehouse.bakehouse.sales_customers
+      comment: ''
+      table_type: MANAGED
+      columns:
+      - name: customerID
+        type: bigint
+        comment: ''
+        nullable: true
+      - name: first_name
+        type: string
+        comment: ''
+        nullable: true
+      - name: last_name
+        type: string
+        comment: ''
+        nullable: true
+      - name: email_address
+        type: string
+        comment: ''
+        nullable: true
+      - name: phone_number
+        type: string
+        comment: ''
+        nullable: true
+      - name: address
+        type: string
+        comment: ''
+        nullable: true
+      - name: city
+        type: string
+        comment: ''
+        nullable: true
+      - name: state
+        type: string
+        comment: ''
+        nullable: true
+      - name: country
+        type: string
+        comment: ''
+        nullable: true
+      - name: continent
+        type: string
+        comment: ''
+        nullable: true
+      - name: postal_zip_code
+        type: bigint
+        comment: ''
+        nullable: true
+      - name: gender
+        type: string
+        comment: ''
+        nullable: true
+    - catalog_name: acao_bakehouse
+      schema_name: bakehouse
+      name: sales_franchises
+      full_name: acao_bakehouse.bakehouse.sales_franchises
+      comment: ''
+      table_type: MANAGED
+      columns:
+      - name: franchiseID
+        type: bigint
+        comment: ''
+        nullable: true
+      - name: name
+        type: string
+        comment: ''
+        nullable: true
+      - name: city
+        type: string
+        comment: ''
+        nullable: true
+      - name: district
+        type: string
+        comment: ''
+        nullable: true
+      - name: zipcode
+        type: string
+        comment: ''
+        nullable: true
+      - name: country
+        type: string
+        comment: ''
+        nullable: true
+      - name: size
+        type: string
+        comment: ''
+        nullable: true
+      - name: longitude
+        type: double
+        comment: ''
+        nullable: true
+      - name: latitude
+        type: double
+        comment: ''
+        nullable: true
+      - name: supplierID
+        type: bigint
+        comment: ''
+        nullable: true
+    - catalog_name: acao_bakehouse
+      schema_name: bakehouse
+      name: sales_suppliers
+      full_name: acao_bakehouse.bakehouse.sales_suppliers
+      comment: ''
+      table_type: MANAGED
+      columns:
+      - name: supplierID
+        type: bigint
+        comment: ''
+        nullable: true
+      - name: name
+        type: string
+        comment: ''
+        nullable: true
+      - name: ingredient
+        type: string
+        comment: ''
+        nullable: true
+      - name: continent
+        type: string
+        comment: ''
+        nullable: true
+      - name: city
+        type: string
+        comment: ''
+        nullable: true
+      - name: district
+        type: string
+        comment: ''
+        nullable: true
+      - name: size
+        type: string
+        comment: ''
+        nullable: true
+      - name: longitude
+        type: double
+        comment: ''
+        nullable: true
+      - name: latitude
+        type: double
+        comment: ''
+        nullable: true
+      - name: approved
+        type: string
+        comment: ''
+        nullable: true
+    - catalog_name: acao_bakehouse
+      schema_name: bakehouse
+      name: sales_transactions
+      full_name: acao_bakehouse.bakehouse.sales_transactions
+      comment: ''
+      table_type: MANAGED
+      columns:
+      - name: transactionID
+        type: bigint
+        comment: ''
+        nullable: true
+      - name: customerID
+        type: bigint
+        comment: ''
+        nullable: true
+      - name: franchiseID
+        type: bigint
+        comment: ''
+        nullable: true
+      - name: dateTime
+        type: timestamp
+        comment: ''
+        nullable: true
+      - name: product
+        type: string
+        comment: ''
+        nullable: true
+      - name: quantity
+        type: bigint
+        comment: ''
+        nullable: true
+      - name: unitPrice
+        type: bigint
+        comment: ''
+        nullable: true
+      - name: totalPrice
+        type: bigint
+        comment: ''
+        nullable: true
+      - name: paymentMethod
+        type: string
+        comment: ''
+        nullable: true
+      - name: cardNumber
+        type: bigint
+        comment: ''
+        nullable: true
+    total_tables: 6
+    total_columns: 51
+    tables_with_comments: 0
+    columns_with_comments: 0
+    description_coverage_pct: 0.0
+  domain:
+    organization_name: Acao
+    domain_description: The catalog focuses on data related to bakery operations and associated business processes. It typically
+      includes schemas covering inventory management, recipe databases, sales transactions, production schedules, and supply
+      chain information. Use this catalog for bakery production analytics, inventory tracking, sales reporting, and operational
+      efficiency analysis.
+    data_domains:
+    - Bakehouse
+    catalog_summaries:
+      acao_bakehouse: The catalog focuses on data related to bakery operations and associated business processes. It typically
+        includes schemas covering inventory management, recipe databases, sales transactions, production schedules, and supply
+        chain information. Use this catalog for bakery production analytics, inventory tracking, sales reporting, and operational
+        efficiency analysis.
+  prompts:
+    classify: 'You are an intent classifier for the UC Data Advisor at Acao.
+
+
+      Classify the user''s latest message into exactly one category:
+
+      - discovery: Questions about finding datasets, browsing catalogs/schemas/tables, understanding table structures, or
+      checking what data exists.
+
+      - metrics: Questions asking for specific numbers, aggregations, counts, trends, or analytical queries about the data.
+
+      - qa: Questions about data governance, access policies, how to request data, FAQs about the data catalog, or general
+      knowledge questions.
+
+      - general: Greetings, small talk, clarifications, or anything that doesn''t fit the above categories.
+
+
+      Respond with ONLY the category name, nothing else.'
+    general: You are the UC Data Advisor, a helpful assistant for discovering and understanding datasets in Unity Catalog
+      at Acao. Respond warmly and briefly. If the user seems to need data help, let them know you can help find datasets,
+      explore table structures, and answer questions about the data catalog.
+    discovery: 'You are the Data Discovery Agent for UC Data Advisor at Acao.
+
+
+      You help users find datasets, understand table structures, and navigate the Unity Catalog. You have access to tools
+      that let you browse UC metadata.
+
+
+      Key behaviors:
+
+      - For conceptual queries (e.g., "data about emissions"), prefer semantic_search_tables for better results
+
+      - For exact name lookups (e.g., "nominations table"), use search_tables or get_table_details
+
+      - When users ask about available data, start by listing catalogs or searching for relevant tables
+
+      - When users ask about a specific dataset, get the full table details including column descriptions
+
+      - Provide clear, concise answers about what data is available and how it''s organized
+
+      - If you''re not sure which catalog or schema to look in, search across all of them
+
+      - Always mention the fully qualified table name (catalog.schema.table) so users can reference it
+
+      - When describing tables, highlight the most important columns and what the table is used for
+
+
+      The workspace contains data including:
+
+      - Bakehouse'
+    metrics: 'You are the Data Metrics Agent for UC Data Advisor at Acao.
+
+
+      You answer analytical questions by querying real data through the Genie Space. You specialize in:
+
+      - Counts, aggregations, and summaries (e.g., "how many...", "total...", "average...")
+
+      - Trends and comparisons (e.g., "monthly throughput", "year over year")
+
+      - Specific data values and lookups
+
+
+      Key behaviors:
+
+      - Use the query_genie tool to get real answers — never guess at numbers
+
+      - If Genie returns SQL, briefly explain what it queried
+
+      - Present data results clearly, using tables or bullet points
+
+      - If the query fails, suggest how the user might rephrase their question
+
+      - Always cite that the data comes from Unity Catalog
+
+
+      The workspace contains data including:
+
+      - Bakehouse'
+    qa: 'You are the Q&A Agent for UC Data Advisor at Acao.
+
+
+      You answer questions about data governance, access policies, and how to use the data catalog. You search a curated knowledge
+      base of FAQs and documentation.
+
+
+      Key behaviors:
+
+      - Use the search_knowledge_base tool to find relevant answers
+
+      - Synthesize information from multiple FAQ entries if needed
+
+      - Be clear about what is documented vs. what you''re inferring
+
+      - For questions not covered in the knowledge base, suggest who to contact or where to look
+
+      - Keep answers concise and actionable
+
+
+      Topics you cover:
+
+      - Data access requests and approval workflows
+
+      - Data governance policies and compliance
+
+      - How to use Unity Catalog features
+
+      - Data quality and lineage questions
+
+      - General questions about the data platform'
+  knowledge_base:
+  - question: How do I request access to a dataset?
+    answer: Submit a data access request through the Unity Catalog access request portal. Your request will be routed to the
+      data steward for the relevant catalog. Access is granted based on your role and business justification. Typical turnaround
+      is 2-3 business days.
+    category: access
+    source: Data Governance Policy
+  - question: What is Unity Catalog?
+    answer: 'Unity Catalog is Databricks'' unified governance solution for all data and AI assets. It provides centralized
+      access control, auditing, lineage, and discovery across all workspaces. All datasets are organized in a three-level
+      namespace: catalog.schema.table.'
+    category: general
+    source: Platform Documentation
+  - question: What is a data steward?
+    answer: A data steward is the designated owner responsible for data quality, access governance, and metadata accuracy
+      within a specific catalog or schema. Data stewards review access requests and ensure compliance with data policies.
+    category: governance
+    source: Data Governance Policy
+  - question: What data quality checks are in place?
+    answer: 'All ingested datasets go through automated data quality checks including: null validation on required fields,
+      range checks for sensor values, referential integrity across related tables, and timeliness checks. Quality metrics
+      are published to the data quality dashboard.'
+    category: quality
+    source: Data Quality Framework
+  - question: Can I create my own tables in Unity Catalog?
+    answer: Users with the CREATE TABLE privilege can create tables in designated sandbox schemas. For production datasets,
+      submit a request to the Data Platform team with your schema design and data source details. All production tables must
+      have column descriptions and a data steward assigned.
+    category: access
+    source: Self-Service Data Guidelines
+  - question: How do I report a data quality issue?
+    answer: Report data quality issues through the Data Quality portal or by contacting the data steward listed in the table's
+      metadata. Include the fully qualified table name, specific columns affected, and a description of the issue.
+    category: quality
+    source: Data Incident Response
+  - question: What is data lineage and how can I view it?
+    answer: Data lineage tracks how data flows from source to destination, including all transformations. In Unity Catalog,
+      you can view lineage for any table by clicking the Lineage tab in the catalog explorer. This shows upstream sources
+      and downstream consumers.
+    category: governance
+    source: Platform Documentation
+  - question: How do I connect to the data from my tools?
+    answer: 'You can access Unity Catalog data through: Databricks notebooks and SQL editor (direct), Power BI and Tableau
+      (via Databricks SQL connector), Python/R (via Databricks Connect or SQL connector), and REST APIs. All connections require
+      authentication through your Databricks workspace credentials.'
+    category: access
+    source: Data Access Guide
+  - question: How is sensitive data protected?
+    answer: 'Sensitive data is protected through: column-level access controls in Unity Catalog, dynamic data masking for
+      PII fields, encryption at rest and in transit, audit logging of all data access, and row-level security where required.
+      Data classification labels are applied to all columns containing sensitive information.'
+    category: security
+    source: Data Security Policy
+  - question: Who do I contact for help with the data platform?
+    answer: 'For platform issues: contact the Data Platform team via ServiceNow or the data-platform Slack channel. For data
+      access: contact the relevant data steward. For data quality issues: use the Data Quality portal. For urgent production
+      issues: page the on-call data engineer.'
+    category: support
+    source: Support Directory
+  - question: How is the data organized?
+    answer: 'Acao data in Unity Catalog follows a domain-based catalog structure. The main catalogs are: acao_bakehouse (The
+      catalog focuses on data related to bakery operations and associated business processes. It typically includes schemas
+      covering inventory management, recipe databases, sales transactions, production schedules, and supply chain information.
+      Use this catalog for bakery production analytics, inventory tracking, sales reporting, and operational efficiency analysis.).'
+    category: general
+    source: Auto-generated from UC metadata
+  - question: What data is in the acao_bakehouse catalog?
+    answer: 'The acao_bakehouse catalog — The catalog focuses on data related to bakery operations and associated business
+      processes. It typically includes schemas covering inventory management, recipe databases, sales transactions, production
+      schedules, and supply chain information. Use this catalog for bakery production analytics, inventory tracking, sales
+      reporting, and operational efficiency analysis. contains 1 schemas: bakehouse. It has 6 tables total.'
+    category: data_catalog
+    source: Auto-generated from UC metadata
+  metric_views: {}
+  metric_refreshes: []
+  ui:
+    header_subtitle: Acao Unity Catalog
+    suggestions:
+    - What catalogs are available?
+    - What data is in acao_bakehouse.bakehouse?
+  genie_tables:
+  - acao_bakehouse.bakehouse.media_customer_reviews
+  - acao_bakehouse.bakehouse.media_gold_reviews_chunked
+  - acao_bakehouse.bakehouse.sales_customers
+  - acao_bakehouse.bakehouse.sales_franchises
+  - acao_bakehouse.bakehouse.sales_suppliers
+  - acao_bakehouse.bakehouse.sales_transactions
+  benchmarks:
+  - question: What catalogs are available in the workspace?
+    expected_agent: discovery
+    expect_contains:
+    - catalog
+    category: discovery
+  - question: Show me the columns in the media_gold_reviews_chunked table
+    expected_agent: discovery
+    expect_contains: []
+    category: discovery
+  - question: How do I request access to a dataset?
+    expected_agent: qa
+    expect_contains: []
+    category: qa
+  - question: What is Unity Catalog?
+    expected_agent: qa
+    expect_contains: []
+    category: qa
+  - question: What data quality checks are in place?
+    expected_agent: qa
+    expect_contains: []
+    category: qa
+  - question: Hello, what can you help me with?
+    expected_agent: general
+    expect_contains: []
+    category: general
+_config_path: config/my_config.yaml

@@ -79,10 +79,17 @@ def provision(config: dict, w) -> dict:
     # Step 6: Create Genie Space
     infra["genie_space_id"] = _create_genie_space(w, infra, app_name, config)
 
-    # Step 7: Create Databricks App (to get auto-created SP)
+    # Step 7: Create Databricks App (to get auto-created SP ID)
     _create_app(w, infra, app_name, config)
 
-    # Step 8: Grant permissions — to both user-provided identity AND auto-created app SP
+    # Step 8: Add app SP to Lakebase (now that we know the auto-created SP)
+    app_sp = infra.get("app_sp_client_id", "")
+    if app_sp:
+        lb = infra.get("lakebase", {})
+        if lb.get("instance"):
+            _add_lakebase_role(w, lb["instance"], app_sp, "SERVICE_PRINCIPAL")
+
+    # Step 9: Grant permissions — to both user-provided identity AND auto-created app SP
     _grant_permissions(w, infra, config, identity)
 
     print()
