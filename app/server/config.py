@@ -18,11 +18,25 @@ def get_workspace_client() -> WorkspaceClient:
         # Auto-injected SPN credentials (App or Model Serving)
         return WorkspaceClient()
 
-    # Local dev: try OAuth M2M first, then fall back to default SDK auth (CLI profile)
-    host = os.environ.get("DATABRICKS_HOST")
+    # Try MLflow's auth utils (works on Model Serving containers and notebooks)
+    host = os.environ.get("DATABRICKS_HOST", "")
+    token = os.environ.get("DATABRICKS_TOKEN", "")
+    if host and not token:
+        try:
+            from mlflow.utils.databricks_utils import get_databricks_host_creds
+            creds = get_databricks_host_creds()
+            if creds and creds.token:
+                return WorkspaceClient(host=host, token=creds.token)
+        except Exception:
+            pass
+
+    # Explicit host + token from env
+    if host and token:
+        return WorkspaceClient(host=host, token=token)
+
+    # Local dev: try OAuth M2M
     client_id = os.environ.get("DATABRICKS_CLIENT_ID")
     client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET")
-
     if all([host, client_id, client_secret]):
         return WorkspaceClient(
             host=host,
@@ -45,13 +59,15 @@ def get_oauth_token() -> str:
 
 def get_workspace_host() -> str:
     """Get workspace host URL with https:// prefix."""
-    if IS_DATABRICKS_APP:
-        host = os.environ.get("DATABRICKS_HOST", "")
-        if host and not host.startswith("http"):
-            host = f"https://{host}"
-        return host
-
     host = os.environ.get("DATABRICKS_HOST", "")
+
+    # Fall back to SDK config host (resolves from profile, env, etc.)
+    if not host:
+        try:
+            host = get_workspace_client().config.host or ""
+        except Exception:
+            pass
+
     if host and not host.startswith("http"):
         host = f"https://{host}"
     return host

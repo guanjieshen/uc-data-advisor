@@ -46,7 +46,7 @@ def provision(config: dict, w) -> dict:
     advisor_catalog = config.get("advisor_catalog", f"{app_name.replace('-', '_')}_catalog")
     serving_model = config.get("serving_model", "databricks-claude-opus-4-6")
     config.get("embedding_model", "databricks-bge-large-en")
-    identity = config.get("app_identity", {"type": "service_principal", "name": ""})
+    identity = config.get("grant_principal", {"type": "service_principal", "name": ""})
 
     infra["app_name"] = app_name
     infra["advisor_catalog"] = advisor_catalog
@@ -520,7 +520,7 @@ def _grant_permissions(w, infra: dict, config: dict, identity: dict) -> None:
     identity_name = identity.get("name", "")
 
     if not identity_name:
-        print("  [permissions] No app_identity.name set, skipping grants")
+        print("  [permissions] No grant_principal.name set, skipping grants")
         return
 
     source_catalogs = config.get("source_catalogs", [])
@@ -629,7 +629,7 @@ def _print_user_grants(config, infra, user_name, source_catalogs, advisor_catalo
     lb = infra.get("lakebase", {})
 
     lines = [
-        f"=== Required grants for app_identity user: {user_name} ===",
+        f"=== Required grants for grant_principal user: {user_name} ===",
         "",
         "Unity Catalog (run as metastore admin or catalog owner):",
     ]

@@ -43,7 +43,7 @@ workspace:
 # workspace:
 #   host: "https://my-workspace.cloud.databricks.com"
 
-app_identity:
+grant_principal:
   type: service_principal
   name: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # SP client ID
 ```
@@ -107,14 +107,14 @@ Metric views are only generated when `enable_metric_views: true` is set in the c
 6. Generates `app.yaml` from infrastructure config
 7. Uploads app files to workspace + deploys Databricks App
 
-## App Identity
+## Grant Principal
 
 ### Service Principal (recommended)
 
 The setup script auto-grants all permissions to both the configured SP and the app's auto-created SP — zero manual steps.
 
 ```yaml
-app_identity:
+grant_principal:
   type: service_principal
   name: "03e2f707-ee86-4ed4-adea-28a6e792c82f"
 ```
@@ -130,7 +130,7 @@ Permissions auto-granted:
 The setup script cannot grant UC permissions to users (requires metastore admin), so it prints a SQL script of required grants and saves it to `config/.generated/required_grants.sql`.
 
 ```yaml
-app_identity:
+grant_principal:
   type: user
   name: "alice@company.com"
 ```
@@ -228,7 +228,7 @@ uv run python -m src.setup.run --config config/my_config.yaml --step deploy
 
 **VS endpoint stuck provisioning**: VS endpoints can take 5-10 minutes. Re-run `--step provision` and it will detect the existing endpoint.
 
-**Lakebase connection refused**: Check that the Lakebase instance is `AVAILABLE` and that the app identity has been added as an instance role.
+**Lakebase connection refused**: Check that the Lakebase instance is `AVAILABLE` and that the grant principal has been added as an instance role.
 
 **Metric views fail to create**: Metric views require specific YAML syntax. Check the generated SQL in `config.generated.metric_views` for any invalid column references. Ensure `enable_metric_views: true` is set.
 

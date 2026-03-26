@@ -218,8 +218,14 @@ __marimo__/
 # Test output
 tests/benchmark_results.json
 
+# MLflow local artifacts
+mlruns/
+mlflow.db
+
 # User-specific config (contains generated state and credentials)
-config/my_config.yaml
+# Only advisor_config.example.yaml should be tracked
+config/*.yaml
+!config/advisor_config.example.yaml
 config/.generated/
 
 # Claude

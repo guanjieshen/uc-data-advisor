@@ -224,29 +224,32 @@
     #input-form button:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .feedback-bar {
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: 4px;
-      margin-top: 6px;
-      margin-left: 44px;
+      gap: 2px;
+      float: right;
+      margin-top: 4px;
+      opacity: 0.4;
+      transition: opacity 0.15s;
     }
+
+    .message:hover .feedback-bar { opacity: 1; }
+    .feedback-bar:has(.active-up, .active-down) { opacity: 1; }
 
     .feedback-btn {
       background: none;
-      border: 1px solid transparent;
-      border-radius: 6px;
-      padding: 4px 6px;
+      border: none;
+      border-radius: 4px;
+      padding: 2px;
       cursor: pointer;
       color: var(--text-muted);
       display: flex;
       align-items: center;
-      gap: 2px;
-      font-size: 12px;
       transition: all 0.15s;
     }
 
-    .feedback-btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
-    .feedback-btn svg { width: 16px; height: 16px; }
+    .feedback-btn:hover { color: var(--text); }
+    .feedback-btn svg { width: 14px; height: 14px; }
     .feedback-btn.active-up { color: #4ade80; }
     .feedback-btn.active-down { color: #f87171; }
 
@@ -254,8 +257,8 @@
       display: flex;
       gap: 6px;
       margin-top: 6px;
-      margin-left: 44px;
       max-width: 500px;
+      clear: both;
       animation: fadeIn 0.15s ease;
     }
 
@@ -414,7 +417,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
           </button>
         `;
-        div.appendChild(bar);
+        div.querySelector('.message-content').appendChild(bar);
       }
 
       chatContainer.scrollTop = chatContainer.scrollHeight;

@@ -23,6 +23,7 @@ async def health():
     return {"status": "ok"}
 
 
+
 # Serve static frontend
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):

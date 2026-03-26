@@ -70,15 +70,9 @@ def main():
     }
 
     if args.step == "all":
-        # Core steps always run
-        for step_name in ["provision", "audit", "generate", "deploy"]:
+        for step_name in ["provision", "audit", "generate", "deploy", "register", "deploy-agents"]:
             steps[step_name](config, w)
             save_config(config, args.config)
-        # Agent model steps only run when agent_deployment_mode is "serving"
-        if config.get("agent_deployment_mode") == "serving":
-            for step_name in ["register", "deploy-agents"]:
-                steps[step_name](config, w)
-                save_config(config, args.config)
     else:
         steps[args.step](config, w)
         save_config(config, args.config)

@@ -1,13 +1,7 @@
-"""Orchestrator — classifies intent and routes to specialized agents.
-
-Supports two deployment modes:
-- in_process: agents instantiated locally (default)
-- serving: agents called via Model Serving endpoints
-"""
+"""Orchestrator — classifies intent and routes to specialized agents via Model Serving."""
 
 import os
 import asyncio
-import json
 import logging
 
 import mlflow
@@ -57,40 +51,49 @@ class RemoteAgentClient:
         from ..config import get_workspace_client
         client = get_workspace_client()
 
-        payload = {"input": request.input}
-        resp = client.api_client.do(
-            "POST",
-            f"/serving-endpoints/{self.endpoint_name}/invocations",
-            body=payload,
-        )
+        # Convert input to plain dicts (request.input may contain MLflow Message objects)
+        input_data = []
+        for item in request.input:
+            if isinstance(item, dict):
+                input_data.append(item)
+            elif hasattr(item, "to_dict"):
+                input_data.append(item.to_dict())
+            else:
+                input_data.append({"role": getattr(item, "role", "user"), "content": getattr(item, "content", str(item))})
+
+        payload = {"input": input_data}
+        try:
+            resp = client.api_client.do(
+                "POST",
+                f"/serving-endpoints/{self.endpoint_name}/invocations",
+                body=payload,
+            )
+        except Exception as e:
+            logger.error(f"Agent endpoint {self.endpoint_name} call failed: {e}")
+            raise
 
         return ResponsesAgentResponse(output=resp.get("output", []))
 
 
 class Orchestrator:
-    """Lightweight intent classifier that routes to sub-agents."""
+    """Lightweight intent classifier that routes to sub-agents via Model Serving."""
 
     def __init__(self):
         from ..advisor_config import get_config
-        mode = get_config().get("agent_deployment_mode", "in_process")
         infra = get_config().get("infrastructure", {})
         agent_endpoints = infra.get("agent_endpoints", {})
 
-        if mode == "serving" and agent_endpoints:
-            logger.info(f"Using Model Serving agents: {list(agent_endpoints.keys())}")
-            self._agents = {
-                name: RemoteAgentClient(ep_name, name)
-                for name, ep_name in agent_endpoints.items()
-            }
-        else:
-            from .discovery import DiscoveryAgent
-            from .metrics import MetricsAgent
-            from .qa import QAAgent
-            self._agents = {
-                "discovery": DiscoveryAgent(),
-                "metrics": MetricsAgent(),
-                "qa": QAAgent(),
-            }
+        if not agent_endpoints:
+            raise RuntimeError(
+                "No agent_endpoints configured. Run the setup pipeline with "
+                "'--step register' and '--step deploy-agents' first."
+            )
+
+        logger.info(f"Using Model Serving agents: {list(agent_endpoints.keys())}")
+        self._agents = {
+            name: RemoteAgentClient(ep_name, name)
+            for name, ep_name in agent_endpoints.items()
+        }
 
     @mlflow.trace(name="orchestrator.route")
     async def route(self, messages: list[dict]) -> tuple[str, str]:

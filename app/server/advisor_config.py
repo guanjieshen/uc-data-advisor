@@ -18,24 +18,41 @@ def _load() -> dict:
     """Load config from YAML file. Cached after first call."""
     import yaml
 
-    # Search paths: env var > app/config/ > project_root/config/
-    candidates = [
-        os.environ.get("ADVISOR_CONFIG_PATH", ""),
-        str(Path(__file__).parent.parent / "config" / "advisor_config.yaml"),  # app/config/
-        str(Path(__file__).parent.parent.parent / "config" / "advisor_config.yaml"),  # project/config/
-        "config/advisor_config.yaml",  # cwd
+    # 1. Explicit env var
+    explicit = os.environ.get("ADVISOR_CONFIG_PATH", "")
+    if explicit and os.path.exists(explicit):
+        return _read_yaml(explicit)
+
+    # 2. Search config directories for any .yaml file with generated content
+    config_dirs = [
+        Path(__file__).parent.parent / "config",          # app/config/
+        Path(__file__).parent.parent.parent / "config",    # project/config/
+        Path("config"),                                     # cwd/config/
     ]
-    for config_path in candidates:
-        if config_path and os.path.exists(config_path):
-            try:
-                with open(config_path) as f:
-                    data = yaml.safe_load(f) or {}
-                    logger.info(f"Loaded advisor config from {config_path}")
+    for config_dir in config_dirs:
+        if config_dir.is_dir():
+            for yaml_file in sorted(config_dir.glob("*.yaml")):
+                if yaml_file.name.endswith(".example.yaml"):
+                    continue
+                data = _read_yaml(str(yaml_file))
+                if data and data.get("generated"):
                     return data
-            except Exception as e:
-                logger.warning(f"Failed to load config from {config_path}: {e}")
+
     logger.warning("No advisor config found, using defaults")
     return {}
+
+
+def _read_yaml(path: str) -> dict:
+    """Read a YAML file, return empty dict on failure."""
+    import yaml
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+            logger.info(f"Loaded advisor config from {path}")
+            return data
+    except Exception as e:
+        logger.warning(f"Failed to load config from {path}: {e}")
+        return {}
 
 
 def get_config() -> dict[str, Any]:

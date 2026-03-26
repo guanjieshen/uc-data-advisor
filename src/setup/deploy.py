@@ -263,7 +263,7 @@ def _deploy_app(config, w):
     """Generate app.yaml from config and deploy the app."""
     infra = config.get("infrastructure", {})
     app_name = infra.get("app_name", "uc-data-advisor")
-    identity = config.get("app_identity", {})
+    identity = config.get("grant_principal", {})
     lb = infra.get("lakebase", {})
 
     print("  [app] Generating app.yaml...")
@@ -299,16 +299,6 @@ env:
     value: "{lb.get('instance', '')}"
 """
 
-    # Add agent deployment mode env vars if configured
-    agent_endpoints = infra.get("agent_endpoints", {})
-    if config.get("agent_deployment_mode") == "serving" and agent_endpoints:
-        app_yaml += f"""  - name: AGENT_DEPLOYMENT_MODE
-    value: serving
-"""
-        for agent_name, ep_name in agent_endpoints.items():
-            app_yaml += f"""  - name: {agent_name.upper()}_AGENT_ENDPOINT
-    value: "{ep_name}"
-"""
 
     # Write app.yaml
     app_dir = os.path.join(os.path.dirname(__file__), "..", "..", "app")
@@ -362,13 +352,8 @@ env:
     if result.returncode != 0:
         return
 
-    # Upload config as advisor_config.yaml (the app expects this name)
-    import shutil
+    # Upload config directory (app auto-discovers any .yaml with generated content)
     config_dir = os.path.join(os.path.dirname(__file__), "..", "..", "config")
-    config_src = config.get("_config_path", os.path.join(config_dir, "advisor_config.yaml"))
-    config_dest = os.path.join(config_dir, "advisor_config.yaml")
-    if os.path.abspath(config_src) != os.path.abspath(config_dest):
-        shutil.copy2(config_src, config_dest)
     _cli(["workspace", "import-dir", config_dir, f"{workspace_path}/config", "--overwrite"], "config upload")
 
     # Step 3: Deploy the app

@@ -47,6 +47,7 @@ def register_agent_models(config: dict, w) -> dict:
 
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     app_dir = os.path.join(project_root, "app")
+    server_dir = os.path.join(app_dir, "server")
     config_dir = os.path.join(project_root, "config")
 
     mlflow.set_registry_uri("databricks-uc")
@@ -97,7 +98,7 @@ def register_agent_models(config: dict, w) -> dict:
                     model_info = mlflow.pyfunc.log_model(
                         artifact_path=f"{agent_name}_agent",
                         python_model=model_def_path,
-                        code_paths=[app_dir, config_dir],
+                        code_paths=[server_dir, config_dir],
                         pip_requirements=pip_reqs,
                         registered_model_name=model_name,
                     )
