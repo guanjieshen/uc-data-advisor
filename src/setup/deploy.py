@@ -299,6 +299,17 @@ env:
     value: "{lb.get('instance', '')}"
 """
 
+    # Add agent deployment mode env vars if configured
+    agent_endpoints = infra.get("agent_endpoints", {})
+    if config.get("agent_deployment_mode") == "serving" and agent_endpoints:
+        app_yaml += f"""  - name: AGENT_DEPLOYMENT_MODE
+    value: serving
+"""
+        for agent_name, ep_name in agent_endpoints.items():
+            app_yaml += f"""  - name: {agent_name.upper()}_AGENT_ENDPOINT
+    value: "{ep_name}"
+"""
+
     # Write app.yaml
     app_dir = os.path.join(os.path.dirname(__file__), "..", "..", "app")
     yaml_path = os.path.join(app_dir, "app.yaml")

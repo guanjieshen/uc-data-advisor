@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 def main():
     parser = argparse.ArgumentParser(description="UC Data Advisor Setup Pipeline")
     parser.add_argument("--config", default="config/advisor_config.yaml", help="Path to config file")
-    parser.add_argument("--step", choices=["provision", "audit", "generate", "deploy", "all"], default="all")
+    parser.add_argument("--step", choices=["provision", "audit", "generate", "deploy", "register", "deploy-agents", "all"], default="all")
     args = parser.parse_args()
 
     from .config_loader import load_config, save_config
@@ -65,12 +65,20 @@ def main():
         "audit": _step_audit,
         "generate": _step_generate,
         "deploy": _step_deploy,
+        "register": _step_register,
+        "deploy-agents": _step_deploy_agents,
     }
 
     if args.step == "all":
-        for step_name, step_fn in steps.items():
-            step_fn(config, w)
+        # Core steps always run
+        for step_name in ["provision", "audit", "generate", "deploy"]:
+            steps[step_name](config, w)
             save_config(config, args.config)
+        # Agent model steps only run when agent_deployment_mode is "serving"
+        if config.get("agent_deployment_mode") == "serving":
+            for step_name in ["register", "deploy-agents"]:
+                steps[step_name](config, w)
+                save_config(config, args.config)
     else:
         steps[args.step](config, w)
         save_config(config, args.config)
@@ -139,6 +147,18 @@ def _step_generate(config, w):
 def _step_deploy(config, w):
     from .deploy import deploy
     deploy(config, w)
+
+
+def _step_register(config, w):
+    from .register_models import register_agent_models
+    config.setdefault("infrastructure", {})
+    config["infrastructure"]["registered_models"] = register_agent_models(config, w)
+
+
+def _step_deploy_agents(config, w):
+    from .deploy_agent_endpoints import deploy_agent_endpoints
+    config.setdefault("infrastructure", {})
+    config["infrastructure"]["agent_endpoints"] = deploy_agent_endpoints(config, w)
 
 
 if __name__ == "__main__":

@@ -9,12 +9,13 @@ import os
 from databricks.sdk import WorkspaceClient
 
 IS_DATABRICKS_APP = bool(os.environ.get("DATABRICKS_APP_NAME"))
+IS_MODEL_SERVING = bool(os.environ.get("DATABRICKS_SERVING_ENDPOINT"))
 
 
 def get_workspace_client() -> WorkspaceClient:
     """Get WorkspaceClient authenticated as a service principal."""
-    if IS_DATABRICKS_APP:
-        # Auto-injected SPN credentials
+    if IS_DATABRICKS_APP or IS_MODEL_SERVING:
+        # Auto-injected SPN credentials (App or Model Serving)
         return WorkspaceClient()
 
     # Local dev: OAuth M2M with SPN credentials from env vars

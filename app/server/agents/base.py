@@ -5,17 +5,16 @@ import json
 import logging
 from uuid import uuid4
 
-from openai import OpenAI, AsyncOpenAI, BadRequestError
 from mlflow.pyfunc import ResponsesAgent
 from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse
-
-from ..config import get_oauth_token, get_workspace_host, IS_DATABRICKS_APP
 
 logger = logging.getLogger(__name__)
 
 
-def get_llm_client() -> AsyncOpenAI:
+def get_llm_client():
     """Async client for orchestrator classify/general_response calls."""
+    from openai import AsyncOpenAI
+    from ..config import get_oauth_token, get_workspace_host, IS_DATABRICKS_APP
     host = get_workspace_host()
     if IS_DATABRICKS_APP:
         token = os.environ.get("DATABRICKS_TOKEN") or get_oauth_token()
@@ -24,8 +23,10 @@ def get_llm_client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=token, base_url=f"{host}/serving-endpoints")
 
 
-def get_sync_llm_client() -> OpenAI:
+def get_sync_llm_client():
     """Sync client for ResponsesAgent.predict() calls."""
+    from openai import OpenAI
+    from ..config import get_oauth_token, get_workspace_host, IS_DATABRICKS_APP
     host = get_workspace_host()
     if IS_DATABRICKS_APP:
         token = os.environ.get("DATABRICKS_TOKEN") or get_oauth_token()
@@ -66,6 +67,7 @@ class ResponsesBaseAgent(ResponsesAgent):
         raise NotImplementedError
 
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
+        from openai import BadRequestError
         client = get_sync_llm_client()
         model = os.environ.get("SERVING_ENDPOINT", "databricks-claude-opus-4-6")
 

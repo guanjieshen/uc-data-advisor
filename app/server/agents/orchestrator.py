@@ -1,17 +1,18 @@
-"""Orchestrator — classifies intent and routes to specialized agents."""
+"""Orchestrator — classifies intent and routes to specialized agents.
+
+Supports two deployment modes:
+- in_process: agents instantiated locally (default)
+- serving: agents called via Model Serving endpoints
+"""
 
 import os
 import asyncio
+import json
 import logging
 
 import mlflow
-from openai import BadRequestError
 
 from .base import get_llm_client
-from .discovery import DiscoveryAgent
-from .metrics import MetricsAgent
-from .qa import QAAgent
-
 from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse
 
 logger = logging.getLogger(__name__)
@@ -43,15 +44,52 @@ Classify the user's latest message into exactly one category:
 Respond with ONLY the category name, nothing else."""
 
 
+class RemoteAgentClient:
+    """Calls an agent hosted on a Model Serving endpoint."""
+
+    def __init__(self, endpoint_name: str, agent_name: str):
+        self.endpoint_name = endpoint_name
+        self.name = agent_name
+
+    def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
+        """Call the remote agent endpoint via the serving invocations API."""
+        from ..config import get_workspace_client
+        client = get_workspace_client()
+
+        payload = {"input": request.input}
+        resp = client.api_client.do(
+            "POST",
+            f"/serving-endpoints/{self.endpoint_name}/invocations",
+            body=payload,
+        )
+
+        return ResponsesAgentResponse(output=resp.get("output", []))
+
+
 class Orchestrator:
     """Lightweight intent classifier that routes to sub-agents."""
 
     def __init__(self):
-        self._agents = {
-            "discovery": DiscoveryAgent(),
-            "metrics": MetricsAgent(),
-            "qa": QAAgent(),
-        }
+        from ..advisor_config import get_config
+        mode = get_config().get("agent_deployment_mode", "in_process")
+        infra = get_config().get("infrastructure", {})
+        agent_endpoints = infra.get("agent_endpoints", {})
+
+        if mode == "serving" and agent_endpoints:
+            logger.info(f"Using Model Serving agents: {list(agent_endpoints.keys())}")
+            self._agents = {
+                name: RemoteAgentClient(ep_name, name)
+                for name, ep_name in agent_endpoints.items()
+            }
+        else:
+            from .discovery import DiscoveryAgent
+            from .metrics import MetricsAgent
+            from .qa import QAAgent
+            self._agents = {
+                "discovery": DiscoveryAgent(),
+                "metrics": MetricsAgent(),
+                "qa": QAAgent(),
+            }
 
     @mlflow.trace(name="orchestrator.route")
     async def route(self, messages: list[dict]) -> tuple[str, str]:
@@ -99,7 +137,7 @@ class Orchestrator:
                 max_tokens=16,
                 temperature=0,
             )
-        except BadRequestError as e:
+        except Exception as e:
             if "guardrail_triggered" in str(e):
                 logger.warning("Guardrail triggered during classification, defaulting to discovery")
                 return "discovery"
