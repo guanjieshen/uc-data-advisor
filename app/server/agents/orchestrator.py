@@ -11,6 +11,7 @@ import json
 import logging
 
 import mlflow
+from openai import BadRequestError
 
 from .base import get_llm_client
 from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse
@@ -137,7 +138,7 @@ class Orchestrator:
                 max_tokens=16,
                 temperature=0,
             )
-        except Exception as e:
+        except BadRequestError as e:
             if "guardrail_triggered" in str(e):
                 logger.warning("Guardrail triggered during classification, defaulting to discovery")
                 return "discovery"
