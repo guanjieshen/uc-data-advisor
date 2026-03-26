@@ -13,27 +13,25 @@ IS_MODEL_SERVING = bool(os.environ.get("DATABRICKS_SERVING_ENDPOINT"))
 
 
 def get_workspace_client() -> WorkspaceClient:
-    """Get WorkspaceClient authenticated as a service principal."""
+    """Get WorkspaceClient authenticated as a service principal or via CLI."""
     if IS_DATABRICKS_APP or IS_MODEL_SERVING:
         # Auto-injected SPN credentials (App or Model Serving)
         return WorkspaceClient()
 
-    # Local dev: OAuth M2M with SPN credentials from env vars
+    # Local dev: try OAuth M2M first, then fall back to default SDK auth (CLI profile)
     host = os.environ.get("DATABRICKS_HOST")
     client_id = os.environ.get("DATABRICKS_CLIENT_ID")
     client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET")
 
-    if not all([host, client_id, client_secret]):
-        raise RuntimeError(
-            "Local dev requires DATABRICKS_HOST, DATABRICKS_CLIENT_ID, "
-            "and DATABRICKS_CLIENT_SECRET env vars for SPN auth"
+    if all([host, client_id, client_secret]):
+        return WorkspaceClient(
+            host=host,
+            client_id=client_id,
+            client_secret=client_secret,
         )
 
-    return WorkspaceClient(
-        host=host,
-        client_id=client_id,
-        client_secret=client_secret,
-    )
+    # Fall back to default SDK auth (CLI profile, env vars, etc.)
+    return WorkspaceClient()
 
 
 def get_oauth_token() -> str:
