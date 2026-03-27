@@ -14,23 +14,25 @@ from ..config import get_oauth_token, get_workspace_host, IS_DATABRICKS_APP
 logger = logging.getLogger(__name__)
 
 
+def _get_token() -> str:
+    """Get auth token for LLM serving endpoint calls."""
+    token = os.environ.get("DATABRICKS_TOKEN", "")
+    if token:
+        return token
+    return get_oauth_token()
+
+
 def get_llm_client() -> AsyncOpenAI:
     """Async client for orchestrator classify/general_response calls."""
     host = get_workspace_host()
-    if IS_DATABRICKS_APP:
-        token = os.environ.get("DATABRICKS_TOKEN") or get_oauth_token()
-    else:
-        token = get_oauth_token()
+    token = _get_token()
     return AsyncOpenAI(api_key=token, base_url=f"{host}/serving-endpoints")
 
 
 def get_sync_llm_client() -> OpenAI:
     """Sync client for ResponsesAgent.predict() calls."""
     host = get_workspace_host()
-    if IS_DATABRICKS_APP:
-        token = os.environ.get("DATABRICKS_TOKEN") or get_oauth_token()
-    else:
-        token = get_oauth_token()
+    token = _get_token()
     return OpenAI(api_key=token, base_url=f"{host}/serving-endpoints")
 
 

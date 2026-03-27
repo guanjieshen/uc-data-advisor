@@ -59,7 +59,6 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
             secret_scope = infra.get("secret_scope", app_name)
             env_vars = {
                 "DATABRICKS_HOST": workspace_host,
-                "DATABRICKS_TOKEN": f"{{{{secrets/{secret_scope}/serving-token}}}}",
                 "SERVING_ENDPOINT": infra.get("serving_endpoint", ""),
                 "GENIE_SPACE_ID": infra.get("genie_space_id", ""),
                 "VS_INDEX_METADATA": infra.get("vs_index_metadata", ""),
@@ -100,7 +99,7 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     # Grant app SP CAN_QUERY on agent endpoints
     app_sp = infra.get("app_sp_client_id", "")
     if app_sp and endpoints:
-        _grant_app_permissions(w, endpoints, app_sp)
+        _grant_endpoint_permissions(w, infra, config, endpoints, app_sp)
 
     print(f"  Deployed {len(endpoints)}/{len(registered)} agent endpoints")
     return endpoints
@@ -110,8 +109,11 @@ def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):
     """Patch environment variables onto a serving endpoint's served entities."""
     try:
         ep = w.serving_endpoints.get(ep_name)
+        if not ep.config or not ep.config.served_entities:
+            logger.warning(f"Endpoint {ep_name} has no served entities yet, skipping env var patch")
+            return
         entities = []
-        for entity in ep.config.served_entities or []:
+        for entity in ep.config.served_entities:
             existing_vars = {}
             if hasattr(entity, 'environment_vars') and entity.environment_vars:
                 existing_vars = dict(entity.environment_vars)
@@ -133,7 +135,6 @@ def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):
 def _configure_ai_gateway(w, ep_name: str, config: dict):
     """Add AI Gateway configuration to an agent serving endpoint."""
     ai_gateway = {
-        "usage_tracking_config": {"enabled": True},
         "rate_limits": [
             {"calls": 120, "key": "user", "renewal_period": "minute"},
             {"calls": 500, "key": "endpoint", "renewal_period": "minute"},
@@ -161,21 +162,25 @@ def _wait_for_endpoint_ready(w, ep_name: str, timeout: int = 600):
     except Exception:
         return  # Endpoint doesn't exist yet
 
-    deadline = time.time() + timeout
+    start = time.time()
+    deadline = start + timeout
     while time.time() < deadline:
         state = str(ep.state.config_update) if ep.state else ""
         if "IN_PROGRESS" not in state and "UPDATING" not in state:
             return
-        print("waiting...", end=" ", flush=True)
+        elapsed = int(time.time() - start)
+        print(f"\r  waiting ({elapsed}s)...", end="", flush=True)
         time.sleep(15)
         try:
             ep = w.serving_endpoints.get(ep_name)
         except Exception:
             return
+    print()
 
 
-def _grant_app_permissions(w, endpoints, app_sp):
-    """Grant the app SP CAN_QUERY on each agent endpoint."""
+def _grant_endpoint_permissions(w, infra, config, endpoints, app_sp):
+    """Grant permissions for agent endpoints to access LLM endpoint and UC."""
+    # Grant app SP CAN_QUERY on each agent endpoint
     for agent_name, ep_name in endpoints.items():
         try:
             ep = w.serving_endpoints.get(ep_name)
@@ -188,3 +193,36 @@ def _grant_app_permissions(w, endpoints, app_sp):
             print(f"    Granted app SP CAN_QUERY on {ep_name}")
         except Exception as e:
             logger.warning(f"Failed to grant app SP on {ep_name}: {e}")
+
+    # Grant each agent endpoint's creator CAN_QUERY on the LLM endpoint
+    # Agent endpoints run as their creator's identity when calling other endpoints
+    llm_ep_name = infra.get("serving_endpoint", "")
+    if llm_ep_name:
+        try:
+            llm_ep = w.serving_endpoints.get(llm_ep_name)
+            acl_entries = []
+
+            # Collect unique creators from agent endpoints
+            creators = set()
+            for ep_name in endpoints.values():
+                try:
+                    ep = w.serving_endpoints.get(ep_name)
+                    if ep.creator:
+                        creators.add(ep.creator)
+                except Exception:
+                    pass
+
+            for creator in creators:
+                # Determine if creator is SP or user
+                if "@" in creator:
+                    acl_entries.append({"user_name": creator, "permission_level": "CAN_QUERY"})
+                else:
+                    acl_entries.append({"service_principal_name": creator, "permission_level": "CAN_QUERY"})
+
+            if acl_entries:
+                w.api_client.do("PATCH", f"/api/2.0/permissions/serving-endpoints/{llm_ep.id}", body={
+                    "access_control_list": acl_entries,
+                })
+                print(f"    Granted agent endpoint creators CAN_QUERY on {llm_ep_name}: {creators}")
+        except Exception as e:
+            logger.warning(f"Failed to grant on LLM endpoint: {e}")

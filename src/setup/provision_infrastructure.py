@@ -72,9 +72,9 @@ def provision(config: dict, w) -> dict:
     # Step 4: Create Lakebase instance
     _create_lakebase(w, infra, app_name, identity)
 
-    # Step 5: Create serving endpoint with AI Gateway
-    infra["serving_endpoint"] = _create_serving_endpoint(w, infra, app_name, serving_model, config)
-    infra["secret_scope"] = app_name
+    # Step 5: Set LLM serving endpoint (use foundation model directly, no proxy)
+    infra["serving_endpoint"] = serving_model
+    print(f"  [serving] Using foundation model: {serving_model}")
 
     # Step 6: Create Genie Space
     infra["genie_space_id"] = _create_genie_space(w, infra, app_name, config)
@@ -342,83 +342,6 @@ def _add_lakebase_role(w, instance_name: str, principal_name: str, identity_type
 
 # ---------------------------------------------------------------------------
 # Step 5: Serving endpoint with AI Gateway
-# ---------------------------------------------------------------------------
-
-def _create_serving_endpoint(w, infra: dict, app_name: str, serving_model: str, config: dict = None) -> str:
-    """Create an external model endpoint with AI Gateway config."""
-    ep_name = infra.get("serving_endpoint", f"{app_name}-llm")
-    scope_name = app_name
-
-    # Check if endpoint exists
-    print(f"  [serving] Creating {ep_name}...", end=" ", flush=True)
-    try:
-        existing = w.serving_endpoints.get(ep_name)
-        if existing:
-            print(f"already exists ({existing.state.ready})")
-            return ep_name
-    except Exception:
-        pass
-
-    # Create secret scope + PAT
-    print("creating secret scope...", end=" ", flush=True)
-    try:
-        w.secrets.create_scope(scope_name)
-    except Exception:
-        pass  # Already exists
-
-    # Generate and store a PAT
-    token_resp = w.tokens.create(comment=f"{app_name}-gateway", lifetime_seconds=0)
-    token_value = token_resp.token_value
-
-    # Store the PAT as a secret (use printf-style to avoid newline)
-    w.secrets.put_secret(scope=scope_name, key="serving-token", string_value=token_value)
-    print("secret stored...", end=" ", flush=True)
-
-    # Create the endpoint
-    api = w.api_client
-    body = {
-        "name": ep_name,
-        "config": {
-            "served_entities": [{
-                "external_model": {
-                    "name": serving_model,
-                    "provider": "databricks-model-serving",
-                    "task": "llm/v1/chat",
-                    "databricks_model_serving_config": {
-                        "databricks_workspace_url": w.config.host,
-                        "databricks_api_token": f"{{{{secrets/{scope_name}/serving-token}}}}",
-                    },
-                },
-            }],
-        },
-        "tags": [
-            {"key": "app", "value": app_name},
-        ],
-    }
-
-    ai_gateway = {
-        "usage_tracking_config": {"enabled": True},
-        "rate_limits": [
-            {"calls": 120, "key": "user", "renewal_period": "minute"},
-            {"calls": 500, "key": "endpoint", "renewal_period": "minute"},
-        ],
-    }
-
-    if (config or {}).get("enable_ai_gateway_guardrails", True):
-        ai_gateway["guardrails"] = {
-            "input": {"safety": True, "pii": {"behavior": "NONE"}},
-            "output": {"safety": False, "pii": {"behavior": "NONE"}},
-        }
-    else:
-        print("(guardrails disabled)...", end=" ", flush=True)
-
-    body["ai_gateway"] = ai_gateway
-
-    api.do("POST", "/api/2.0/serving-endpoints", body=body)
-    print("created (READY)")
-    return ep_name
-
-
 # ---------------------------------------------------------------------------
 # Step 6: Genie Space
 # ---------------------------------------------------------------------------
