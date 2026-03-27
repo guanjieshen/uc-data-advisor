@@ -299,7 +299,7 @@ def _create_lakebase_database(w, lb: dict, instance_name: str, db_name: str) -> 
     print(f"  [lakebase] Creating database {db_name}...", end=" ", flush=True)
     try:
         w.postgres.create_database(
-            parent=f"instances/{instance_name}",
+            parent=f"projects/{instance_name}",
             database=Database(
                 spec=DatabaseDatabaseSpec(postgres_database=db_name),
             ),
@@ -514,7 +514,7 @@ def _grant_sp_permissions(w, infra, sp_id, source_catalogs, advisor_catalog, war
         try:
             from databricks.sdk.service.postgres import Role, RoleRoleSpec
             w.postgres.create_role(
-                parent=f"instances/{lb['instance']}",
+                parent=f"projects/{lb['instance']}",
                 role=Role(
                     spec=RoleRoleSpec(
                         identity_type="SERVICE_PRINCIPAL",
