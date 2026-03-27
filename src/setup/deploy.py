@@ -297,6 +297,8 @@ env:
     value: "{infra.get('app_sp_client_id', identity.get('name', ''))}"
   - name: LAKEBASE_INSTANCE
     value: "{lb.get('instance', '')}"
+  - name: ADVISOR_CONFIG_PATH
+    value: "config/advisor_config.yaml"
 """
 
 
@@ -352,9 +354,10 @@ env:
     if result.returncode != 0:
         return
 
-    # Upload config directory (app auto-discovers any .yaml with generated content)
-    config_dir = os.path.join(os.path.dirname(__file__), "..", "..", "config")
-    _cli(["workspace", "import-dir", config_dir, f"{workspace_path}/config", "--overwrite"], "config upload")
+    # Upload the specific config file as config/advisor_config.yaml
+    # (matches the ADVISOR_CONFIG_PATH env var in app.yaml)
+    config_src = os.path.abspath(config.get("_config_path", "config/advisor_config.yaml"))
+    _cli(["workspace", "import", config_src, f"{workspace_path}/config/advisor_config.yaml", "--overwrite", "--format", "AUTO"], "config upload")
 
     # Step 3: Deploy the app
     print(f"  [app] Deploying {app_name}...")

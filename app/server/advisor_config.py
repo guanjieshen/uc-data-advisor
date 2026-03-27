@@ -1,12 +1,11 @@
 """Runtime config loader for the UC Data Advisor app.
 
-Loads the generated section of advisor_config.yaml at startup.
+Loads the config YAML from the path specified by ADVISOR_CONFIG_PATH env var.
 All agent prompts, UI config, and domain context come from here.
 """
 
 import os
 import logging
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -15,43 +14,21 @@ _CONFIG: dict | None = None
 
 
 def _load() -> dict:
-    """Load config from YAML file. Cached after first call."""
+    """Load config from the YAML file specified by ADVISOR_CONFIG_PATH."""
     import yaml
 
-    # 1. Explicit env var
-    explicit = os.environ.get("ADVISOR_CONFIG_PATH", "")
-    if explicit and os.path.exists(explicit):
-        return _read_yaml(explicit)
+    config_path = os.environ.get("ADVISOR_CONFIG_PATH", "")
+    if not config_path:
+        logger.warning("ADVISOR_CONFIG_PATH not set, using defaults")
+        return {}
 
-    # 2. Search config directories for any .yaml file with generated content
-    config_dirs = [
-        Path(__file__).parent.parent / "config",          # app/config/
-        Path(__file__).parent.parent.parent / "config",    # project/config/
-        Path("config"),                                     # cwd/config/
-    ]
-    for config_dir in config_dirs:
-        if config_dir.is_dir():
-            for yaml_file in sorted(config_dir.glob("*.yaml")):
-                if yaml_file.name.endswith(".example.yaml"):
-                    continue
-                data = _read_yaml(str(yaml_file))
-                if data and data.get("generated"):
-                    return data
-
-    logger.warning("No advisor config found, using defaults")
-    return {}
-
-
-def _read_yaml(path: str) -> dict:
-    """Read a YAML file, return empty dict on failure."""
-    import yaml
     try:
-        with open(path) as f:
+        with open(config_path) as f:
             data = yaml.safe_load(f) or {}
-            logger.info(f"Loaded advisor config from {path}")
+            logger.info(f"Loaded advisor config from {config_path}")
             return data
     except Exception as e:
-        logger.warning(f"Failed to load config from {path}: {e}")
+        logger.warning(f"Failed to load config from {config_path}: {e}")
         return {}
 
 
