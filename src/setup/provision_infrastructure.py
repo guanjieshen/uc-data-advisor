@@ -82,15 +82,13 @@ def provision(config: dict, w) -> dict:
     # Step 7: Create Databricks App (to get auto-created SP ID)
     _create_app(w, infra, app_name, config)
 
-    # Step 8: Add app SP to Lakebase (now that we know the auto-created SP)
+    # Step 8: Add app SP to Lakebase + grant database permissions
     app_sp = infra.get("app_sp_client_id", "")
     if app_sp:
         lb = infra.get("lakebase", {})
         if lb.get("instance"):
             _add_lakebase_role(w, lb["instance"], app_sp, "SERVICE_PRINCIPAL")
-
-    # Step 9: Grant permissions — to both user-provided identity AND auto-created app SP
-    _grant_permissions(w, infra, config, identity)
+    grant_lakebase_permissions(config, w)
 
     print()
     print("=" * 60)
@@ -292,27 +290,6 @@ def _create_lakebase(w, infra: dict, app_name: str, identity: dict) -> None:
         _add_lakebase_role(w, instance_name, identity["name"], "SERVICE_PRINCIPAL")
 
 
-def _lakebase_connect(w, lb: dict, instance_name: str, dbname: str = "postgres"):
-    """Create an asyncpg connection to a Lakebase instance."""
-    import asyncio
-    import asyncpg
-    import ssl
-
-    cred = w.database.generate_database_credential(instance_names=[instance_name])
-    deployer_user = w.current_user.me().user_name
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
-
-    async def _connect():
-        return await asyncpg.connect(
-            host=lb["host"], port=int(lb.get("port", 5432)),
-            database=dbname, user=deployer_user,
-            password=cred.token, ssl=ssl_ctx,
-        )
-
-    return asyncio.run(_connect())
-
 
 def _lakebase_execute(w, lb: dict, instance_name: str, statements: list[str], dbname: str = "postgres"):
     """Execute SQL statements against a Lakebase instance via asyncpg."""
@@ -473,98 +450,89 @@ def _create_app(w, infra: dict, app_name: str, config: dict) -> None:
         print(f"FAILED: {result.stderr[:200]}")
 
 
-def _grant_permissions(w, infra: dict, config: dict, identity: dict) -> None:
-    """Grant permissions based on app identity type."""
-    identity_type = identity.get("type", "service_principal")
-    identity_name = identity.get("name", "")
-
-    if not identity_name:
-        print("  [permissions] No grant_principal.name set, skipping grants")
-        return
-
-    source_catalogs = config.get("source_catalogs", [])
-    advisor_catalog = infra["advisor_catalog"]
-    warehouse_id = infra["warehouse_id"]
-
-    # Always grant to the auto-created app SP (if different from identity)
-    app_sp = infra.get("app_sp_client_id", "")
+def _get_sp_list(config: dict) -> set[str]:
+    """Collect all SPs that need grants (grant_principal + app auto-SP)."""
+    infra = config.get("infrastructure", {})
+    identity = config.get("grant_principal", {})
     sp_list = set()
-    if identity_type == "service_principal" and identity_name:
-        sp_list.add(identity_name)
+    if identity.get("type") == "service_principal" and identity.get("name"):
+        sp_list.add(identity["name"])
+    app_sp = infra.get("app_sp_client_id", "")
     if app_sp:
         sp_list.add(app_sp)
+    return sp_list
 
+
+def grant_uc_permissions(config: dict, w) -> None:
+    """Grant UC catalog/schema permissions. Run before metadata audit."""
+    infra = config.get("infrastructure", {})
+    source_catalogs = config.get("source_catalogs", [])
+    advisor_catalog = infra.get("advisor_catalog", "")
+    warehouse_id = infra.get("warehouse_id", "")
+    identity = config.get("grant_principal", {})
+
+    print("  [permissions] Granting UC access...")
+
+    sp_list = _get_sp_list(config)
     if sp_list:
         for sp_id in sp_list:
-            _grant_sp_permissions(w, infra, sp_id, source_catalogs, advisor_catalog, warehouse_id)
-    elif identity_type == "user":
-        _print_user_grants(config, infra, identity_name, source_catalogs, advisor_catalog)
-
-
-def _grant_sp_permissions(w, infra, sp_id, source_catalogs, advisor_catalog, warehouse_id):
-    """Auto-grant all permissions to a service principal."""
-    print(f"  [permissions] Granting SP {sp_id[:20]}... access")
-
-    # UC grants on source catalogs
-    for catalog in source_catalogs:
-        for stmt in [
-            f"GRANT USE CATALOG ON CATALOG {catalog} TO `{sp_id}`",
-            f"GRANT SELECT ON CATALOG {catalog} TO `{sp_id}`",
-        ]:
-            try:
-                _run_sql(w, warehouse_id, stmt)
-            except Exception as e:
-                logger.warning(f"Grant failed (may be OK): {e}")
-        # Grant USE SCHEMA per-schema (wildcard not supported)
-        try:
-            schemas = list(w.schemas.list(catalog_name=catalog))
-            for schema in schemas:
-                if schema.name not in SYSTEM_SCHEMAS:
+            print(f"    Principal: {sp_id}")
+            for catalog in source_catalogs:
+                for stmt in [
+                    f"GRANT USE CATALOG ON CATALOG {catalog} TO `{sp_id}`",
+                    f"GRANT SELECT ON CATALOG {catalog} TO `{sp_id}`",
+                ]:
                     try:
-                        _run_sql(w, warehouse_id, f"GRANT USE SCHEMA ON SCHEMA {catalog}.{schema.name} TO `{sp_id}`")
+                        _run_sql(w, warehouse_id, stmt)
+                        print(f"      {stmt}")
                     except Exception:
                         pass
-        except Exception:
-            pass
+                try:
+                    for schema in w.schemas.list(catalog_name=catalog):
+                        if schema.name not in SYSTEM_SCHEMAS:
+                            stmt = f"GRANT USE SCHEMA ON SCHEMA {catalog}.{schema.name} TO `{sp_id}`"
+                            try:
+                                _run_sql(w, warehouse_id, stmt)
+                                print(f"      {stmt}")
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+            stmt = f"GRANT ALL PRIVILEGES ON CATALOG {advisor_catalog} TO `{sp_id}`"
+            try:
+                _run_sql(w, warehouse_id, stmt)
+                print(f"      {stmt}")
+            except Exception:
+                pass
+        print("    UC grants complete")
+    elif identity.get("type") == "user":
+        _print_user_grants(config, infra, identity["name"], source_catalogs, advisor_catalog)
 
-    # UC grants on advisor catalog
-    try:
-        _run_sql(w, warehouse_id, f"GRANT ALL PRIVILEGES ON CATALOG {advisor_catalog} TO `{sp_id}`")
-    except Exception as e:
-        logger.warning(f"Grant failed: {e}")
 
-    # Serving endpoint permission
-    ep_name = infra.get("serving_endpoint", "")
-    if ep_name:
-        try:
-            # Get endpoint ID
-            ep = w.serving_endpoints.get(ep_name)
-            ep_id = ep.id
-            w.api_client.do("PATCH", f"/api/2.0/permissions/serving-endpoints/{ep_id}", body={
-                "access_control_list": [{
-                    "service_principal_name": sp_id,
-                    "permission_level": "CAN_QUERY",
-                }],
-            })
-            print(f"    Granted CAN_QUERY on {ep_name}")
-        except Exception as e:
-            logger.warning(f"Serving endpoint permission failed: {e}")
-
-    # Lakebase database grants
+def grant_lakebase_permissions(config: dict, w) -> None:
+    """Grant Lakebase database permissions. Run after Lakebase instance is available."""
+    infra = config.get("infrastructure", {})
     lb = infra.get("lakebase", {})
-    if lb.get("host") and lb.get("database"):
-        try:
-            _lakebase_execute(w, lb, lb["instance"], [
-                f'GRANT ALL ON DATABASE {lb["database"]} TO "{sp_id}"',
-                f'GRANT ALL ON SCHEMA public TO "{sp_id}"',
-                f'GRANT ALL ON ALL TABLES IN SCHEMA public TO "{sp_id}"',
-                f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "{sp_id}"',
-            ], dbname=lb["database"])
-            print("    Granted Lakebase access")
-        except Exception as e:
-            logger.warning(f"Lakebase grants failed: {e}")
 
-    print("    SP permissions complete")
+    if not lb.get("host") or not lb.get("database"):
+        return
+
+    print("  [permissions] Granting Lakebase access...")
+
+    for sp_id in _get_sp_list(config):
+        stmts = [
+            f'GRANT ALL ON DATABASE {lb["database"]} TO "{sp_id}"',
+            f'GRANT ALL ON SCHEMA public TO "{sp_id}"',
+            f'GRANT ALL ON ALL TABLES IN SCHEMA public TO "{sp_id}"',
+            f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "{sp_id}"',
+        ]
+        try:
+            _lakebase_execute(w, lb, lb["instance"], stmts, dbname=lb["database"])
+            print(f"    Principal: {sp_id}")
+            for stmt in stmts:
+                print(f"      {stmt}")
+        except Exception as e:
+            logger.warning(f"Lakebase grants failed for {sp_id[:20]}: {e}")
 
 
 def _print_user_grants(config, infra, user_name, source_catalogs, advisor_catalog):

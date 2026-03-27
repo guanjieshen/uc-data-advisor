@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 def main():
     parser = argparse.ArgumentParser(description="UC Data Advisor Setup Pipeline")
     parser.add_argument("--config", default="config/advisor_config.yaml", help="Path to config file")
-    parser.add_argument("--step", choices=["provision", "audit", "generate", "deploy", "register", "deploy-agents", "grant-agent-permissions", "verify", "all"], default="all")
+    parser.add_argument("--step", choices=["provision", "grant-uc", "audit", "generate", "deploy", "register", "deploy-agents", "grant-agent-permissions", "verify", "all"], default="all")
     args = parser.parse_args()
 
     from .config_loader import load_config, save_config
@@ -62,6 +62,7 @@ def main():
 
     steps = {
         "provision": _step_provision,
+        "grant-uc": _step_grant_uc,
         "audit": _step_audit,
         "generate": _step_generate,
         "deploy": _step_deploy,
@@ -72,7 +73,7 @@ def main():
     }
 
     if args.step == "all":
-        for step_name in ["provision", "audit", "generate", "deploy", "register", "deploy-agents", "grant-agent-permissions", "verify"]:
+        for step_name in ["provision", "grant-uc", "audit", "generate", "register", "deploy-agents", "grant-agent-permissions", "deploy", "verify"]:
             steps[step_name](config, w)
             save_config(config, args.config)
     else:
@@ -155,6 +156,11 @@ def _step_deploy_agents(config, w):
     from .deploy_agent_endpoints import deploy_agent_endpoints
     config.setdefault("infrastructure", {})
     config["infrastructure"]["agent_endpoints"] = deploy_agent_endpoints(config, w)
+
+
+def _step_grant_uc(config, w):
+    from .provision_infrastructure import grant_uc_permissions
+    grant_uc_permissions(config, w)
 
 
 def _step_grant_agent_permissions(config, w):

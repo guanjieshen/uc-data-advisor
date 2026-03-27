@@ -220,6 +220,6 @@ def _grant_endpoint_permissions(w, infra, config, endpoints, app_sp):
                     ),
                 ],
             )
-            print(f"    Granted app SP CAN_QUERY on {ep_name}")
+            print(f"    CAN_QUERY on endpoint '{ep_name}' → SP {app_sp}")
         except Exception as e:
             logger.warning(f"Failed to grant app SP on {ep_name}: {e}")
