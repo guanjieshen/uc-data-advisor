@@ -292,22 +292,64 @@ def _create_lakebase(w, infra: dict, app_name: str, identity: dict) -> None:
         _add_lakebase_role(w, instance_name, identity["name"], "SERVICE_PRINCIPAL")
 
 
-def _create_lakebase_database(w, lb: dict, instance_name: str, db_name: str) -> None:
-    """Create a database inside the Lakebase instance via the Postgres SDK."""
-    from databricks.sdk.service.postgres import Database, DatabaseDatabaseSpec
+def _lakebase_connect(w, lb: dict, instance_name: str, dbname: str = "postgres"):
+    """Create an asyncpg connection to a Lakebase instance."""
+    import asyncio
+    import asyncpg
+    import ssl
 
+    cred = w.database.generate_database_credential(instance_names=[instance_name])
+    deployer_user = w.current_user.me().user_name
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    async def _connect():
+        return await asyncpg.connect(
+            host=lb["host"], port=int(lb.get("port", 5432)),
+            database=dbname, user=deployer_user,
+            password=cred.token, ssl=ssl_ctx,
+        )
+
+    return asyncio.run(_connect())
+
+
+def _lakebase_execute(w, lb: dict, instance_name: str, statements: list[str], dbname: str = "postgres"):
+    """Execute SQL statements against a Lakebase instance via asyncpg."""
+    import asyncio
+    import asyncpg
+    import ssl
+
+    cred = w.database.generate_database_credential(instance_names=[instance_name])
+    deployer_user = w.current_user.me().user_name
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    async def _run():
+        conn = await asyncpg.connect(
+            host=lb["host"], port=int(lb.get("port", 5432)),
+            database=dbname, user=deployer_user,
+            password=cred.token, ssl=ssl_ctx,
+        )
+        for stmt in statements:
+            try:
+                await conn.execute(stmt)
+            except Exception:
+                pass
+        await conn.close()
+
+    asyncio.run(_run())
+
+
+def _create_lakebase_database(w, lb: dict, instance_name: str, db_name: str) -> None:
+    """Create a database inside the Lakebase instance."""
     print(f"  [lakebase] Creating database {db_name}...", end=" ", flush=True)
     try:
-        w.postgres.create_database(
-            parent=f"projects/{instance_name}",
-            database=Database(
-                spec=DatabaseDatabaseSpec(postgres_database=db_name),
-            ),
-            database_id=db_name,
-        )
+        _lakebase_execute(w, lb, instance_name, [f"CREATE DATABASE {db_name}"], dbname="postgres")
         print("created")
     except Exception as e:
-        if "already exists" in str(e).lower():
+        if "already exists" in str(e):
             print("already exists")
         else:
             print(f"failed: {e}")
@@ -508,27 +550,19 @@ def _grant_sp_permissions(w, infra, sp_id, source_catalogs, advisor_catalog, war
         except Exception as e:
             logger.warning(f"Serving endpoint permission failed: {e}")
 
-    # Lakebase database grants via Postgres SDK role with superuser membership
+    # Lakebase database grants
     lb = infra.get("lakebase", {})
-    if lb.get("instance"):
+    if lb.get("host") and lb.get("database"):
         try:
-            from databricks.sdk.service.postgres import Role, RoleRoleSpec
-            w.postgres.create_role(
-                parent=f"projects/{lb['instance']}",
-                role=Role(
-                    spec=RoleRoleSpec(
-                        identity_type="SERVICE_PRINCIPAL",
-                        membership_roles=["databricks_superuser"],
-                    ),
-                ),
-                role_id=sp_id,
-            )
-            print(f"    Granted Lakebase access (superuser role)")
+            _lakebase_execute(w, lb, lb["instance"], [
+                f'GRANT ALL ON DATABASE {lb["database"]} TO "{sp_id}"',
+                f'GRANT ALL ON SCHEMA public TO "{sp_id}"',
+                f'GRANT ALL ON ALL TABLES IN SCHEMA public TO "{sp_id}"',
+                f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "{sp_id}"',
+            ], dbname=lb["database"])
+            print("    Granted Lakebase access")
         except Exception as e:
-            if "already exists" in str(e).lower():
-                print(f"    Lakebase role already exists")
-            else:
-                logger.warning(f"Lakebase grants failed: {e}")
+            logger.warning(f"Lakebase grants failed: {e}")
 
     print("    SP permissions complete")
 
