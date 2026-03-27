@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Unity Catalog Data Advisor Agent for natural language dataset discovery"
 requires-python = ">=3.12"
 dependencies = [
+    "asyncpg>=0.31.0",
     "databricks-sdk>=0.99.0",
     "mlflow>=3.10.1",
     "pydantic>=2.12.5",
