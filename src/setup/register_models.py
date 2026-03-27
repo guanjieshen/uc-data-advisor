@@ -51,6 +51,7 @@ def register_agent_models(config: dict, w) -> dict:
     config_dir = os.path.join(project_root, "config")
 
     mlflow.set_registry_uri("databricks-uc")
+    mlflow.set_experiment(f"/uc-data-advisor-{app_name}-traces")
 
     # Read pip requirements from app/requirements.txt
     req_path = os.path.join(app_dir, "requirements.txt")
