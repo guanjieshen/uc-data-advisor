@@ -171,11 +171,20 @@ def _grant_endpoint_permissions(w, infra, config, endpoints, app_sp):
     """Grant permissions for agent endpoints."""
     for agent_name, ep_name in endpoints.items():
         try:
-            # Get endpoint ID via raw API (SDK object may have id=None)
-            resp = w.api_client.do("GET", f"/api/2.0/serving-endpoints/{ep_name}")
-            ep_id = resp.get("id")
+            # Retry getting endpoint ID (may not be available immediately after deploy)
+            ep_id = None
+            for _ in range(6):
+                try:
+                    resp = w.api_client.do("GET", f"/api/2.0/serving-endpoints/{ep_name}")
+                    ep_id = resp.get("id")
+                    if ep_id:
+                        break
+                except Exception:
+                    pass
+                time.sleep(10)
+
             if not ep_id:
-                logger.warning(f"Could not get ID for {ep_name}, skipping permission grant")
+                logger.warning(f"Could not get ID for {ep_name} after retries, skipping")
                 continue
 
             w.api_client.do("PATCH", f"/api/2.0/permissions/serving-endpoints/{ep_id}", body={
