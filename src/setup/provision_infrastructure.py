@@ -293,30 +293,24 @@ def _create_lakebase(w, infra: dict, app_name: str, identity: dict) -> None:
 
 
 def _create_lakebase_database(w, lb: dict, instance_name: str, db_name: str) -> None:
-    """Create a database inside the Lakebase instance via psql."""
-    import subprocess
+    """Create a database inside the Lakebase instance via the Postgres SDK."""
+    from databricks.sdk.service.postgres import Database, DatabaseDatabaseSpec
 
     print(f"  [lakebase] Creating database {db_name}...", end=" ", flush=True)
     try:
-        cred = w.database.generate_database_credential(instance_names=[instance_name])
-        deployer_user = w.current_user.me().user_name
-        result = subprocess.run(
-            ["psql",
-             f"host={lb['host']} port={lb['port']} dbname=postgres "
-             f"user={deployer_user} password={cred.token} sslmode=require",
-             "-c", f"CREATE DATABASE {db_name}"],
-            capture_output=True, text=True, timeout=30,
+        w.postgres.create_database(
+            parent=f"instances/{instance_name}",
+            database=Database(
+                spec=DatabaseDatabaseSpec(postgres_database=db_name),
+            ),
+            database_id=db_name,
         )
-        if result.returncode == 0:
-            print("created")
-        elif "already exists" in result.stderr:
+        print("created")
+    except Exception as e:
+        if "already exists" in str(e).lower():
             print("already exists")
         else:
-            print(f"warning: {result.stderr[:100]}")
-    except FileNotFoundError:
-        logger.warning("psql not found — create the database manually")
-    except Exception as e:
-        print(f"failed: {e}")
+            print(f"failed: {e}")
 
 
 def _add_lakebase_role(w, instance_name: str, principal_name: str, identity_type: str) -> None:
@@ -591,33 +585,27 @@ def _grant_sp_permissions(w, infra, sp_id, source_catalogs, advisor_catalog, war
         except Exception as e:
             logger.warning(f"Serving endpoint permission failed: {e}")
 
-    # Lakebase database grants via psql subprocess
+    # Lakebase database grants via Postgres SDK role with superuser membership
     lb = infra.get("lakebase", {})
-    if lb.get("host") and lb.get("database"):
+    if lb.get("instance"):
         try:
-            import subprocess
-            cred = w.database.generate_database_credential(instance_names=[lb["instance"]])
-            deployer_user = w.current_user.me().user_name
-            grant_sql = "; ".join([
-                f'GRANT ALL ON DATABASE {lb["database"]} TO "{sp_id}"',
-                f'GRANT ALL ON SCHEMA public TO "{sp_id}"',
-                f'GRANT ALL ON ALL TABLES IN SCHEMA public TO "{sp_id}"',
-                f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "{sp_id}"',
-            ])
-            result = subprocess.run(
-                ["psql", f"host={lb['host']} port={lb['port']} dbname={lb['database']} "
-                 f"user={deployer_user} password={cred.token} sslmode=require",
-                 "-c", grant_sql],
-                capture_output=True, text=True, timeout=30,
+            from databricks.sdk.service.postgres import Role, RoleRoleSpec
+            w.postgres.create_role(
+                parent=f"instances/{lb['instance']}",
+                role=Role(
+                    spec=RoleRoleSpec(
+                        identity_type="SERVICE_PRINCIPAL",
+                        membership_roles=["databricks_superuser"],
+                    ),
+                ),
+                role_id=sp_id,
             )
-            if result.returncode == 0:
-                print("    Granted Lakebase access")
-            else:
-                logger.warning(f"Lakebase grants via psql: {result.stderr[:200]}")
-        except FileNotFoundError:
-            logger.warning("psql not found — Lakebase grants require manual application")
+            print(f"    Granted Lakebase access (superuser role)")
         except Exception as e:
-            logger.warning(f"Lakebase grants failed (may need manual): {e}")
+            if "already exists" in str(e).lower():
+                print(f"    Lakebase role already exists")
+            else:
+                logger.warning(f"Lakebase grants failed: {e}")
 
     print("    SP permissions complete")
 
