@@ -89,13 +89,29 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
                 print(f"  [{agent_name}] FAILED: {e}")
                 logger.error(f"Failed to deploy {agent_name}: {e}", exc_info=True)
 
-    # Grant permissions
-    app_sp = infra.get("app_sp_client_id", "")
-    if app_sp and endpoints:
-        _grant_endpoint_permissions(w, infra, config, endpoints, app_sp)
-
     print(f"  Deployed {len(endpoints)}/{len(registered)} agent endpoints")
+    print("  Note: run '--step grant-agent-permissions' after endpoints are READY")
     return endpoints
+
+
+def grant_agent_permissions(config: dict, w) -> None:
+    """Grant app SP CAN_QUERY on agent endpoints. Run after endpoints are provisioned."""
+    infra = config.get("infrastructure", {})
+    endpoints = infra.get("agent_endpoints", {})
+    app_sp = infra.get("app_sp_client_id", "")
+
+    if not endpoints:
+        print("  No agent endpoints configured")
+        return
+    if not app_sp:
+        print("  No app SP configured")
+        return
+
+    print("=" * 60)
+    print("Granting Agent Endpoint Permissions")
+    print("=" * 60)
+
+    _grant_endpoint_permissions(w, infra, config, endpoints, app_sp)
 
 
 def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):

@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 def main():
     parser = argparse.ArgumentParser(description="UC Data Advisor Setup Pipeline")
     parser.add_argument("--config", default="config/advisor_config.yaml", help="Path to config file")
-    parser.add_argument("--step", choices=["provision", "audit", "generate", "deploy", "register", "deploy-agents", "all"], default="all")
+    parser.add_argument("--step", choices=["provision", "audit", "generate", "deploy", "register", "deploy-agents", "grant-agent-permissions", "verify", "all"], default="all")
     args = parser.parse_args()
 
     from .config_loader import load_config, save_config
@@ -67,10 +67,12 @@ def main():
         "deploy": _step_deploy,
         "register": _step_register,
         "deploy-agents": _step_deploy_agents,
+        "grant-agent-permissions": _step_grant_agent_permissions,
+        "verify": _step_verify,
     }
 
     if args.step == "all":
-        for step_name in ["provision", "audit", "generate", "deploy", "register", "deploy-agents"]:
+        for step_name in ["provision", "audit", "generate", "deploy", "register", "deploy-agents", "grant-agent-permissions", "verify"]:
             steps[step_name](config, w)
             save_config(config, args.config)
     else:
@@ -153,6 +155,95 @@ def _step_deploy_agents(config, w):
     from .deploy_agent_endpoints import deploy_agent_endpoints
     config.setdefault("infrastructure", {})
     config["infrastructure"]["agent_endpoints"] = deploy_agent_endpoints(config, w)
+
+
+def _step_grant_agent_permissions(config, w):
+    from .deploy_agent_endpoints import grant_agent_permissions
+    grant_agent_permissions(config, w)
+
+
+def _step_verify(config, w):
+    """Run benchmark questions against the deployed app to verify it works."""
+    import subprocess
+    import json
+
+    infra = config.get("infrastructure", {})
+    app_name = infra.get("app_name", "")
+    workspace = config.get("workspace", {})
+    profile = workspace.get("profile", "")
+
+    # Get the app URL
+    cmd = ["databricks", "apps", "get", app_name, "-o", "json"]
+    if profile:
+        cmd += ["-p", profile]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    app_url = ""
+    if result.returncode == 0:
+        try:
+            app_url = json.loads(result.stdout).get("url", "")
+        except Exception:
+            pass
+
+    if not app_url:
+        print("  Could not determine app URL, skipping verification")
+        return
+
+    print("=" * 60)
+    print("Verification")
+    print("=" * 60)
+    print(f"  App URL: {app_url}")
+
+    # Wait for agent endpoints to be ready
+    agent_endpoints = infra.get("agent_endpoints", {})
+    if agent_endpoints:
+        import time
+        print("  Waiting for agent endpoints to be ready...", end=" ", flush=True)
+        start = time.time()
+        all_ready = False
+        for _ in range(60):
+            try:
+                ready_count = 0
+                for ep_name in agent_endpoints.values():
+                    resp = w.api_client.do("GET", f"/api/2.0/serving-endpoints/{ep_name}")
+                    if resp.get("state", {}).get("ready") == "READY":
+                        ready_count += 1
+                if ready_count == len(agent_endpoints):
+                    all_ready = True
+                    break
+            except Exception:
+                pass
+            elapsed = int(time.time() - start)
+            print(f"\r  Waiting for agent endpoints ({elapsed}s)...{' ' * 20}", end="", flush=True)
+            time.sleep(15)
+
+        if all_ready:
+            print(f"\r  Agent endpoints ready ({int(time.time() - start)}s){' ' * 30}")
+        else:
+            print(f"\r  Agent endpoints not ready after {int(time.time() - start)}s, running benchmarks anyway{' ' * 10}")
+
+    # Run benchmarks
+    config_path = os.path.abspath(config.get("_config_path", "config/advisor_config.yaml"))
+    env = {
+        **os.environ,
+        "APP_URL": app_url,
+        "ADVISOR_CONFIG_PATH": config_path,
+    }
+    if profile:
+        env["DATABRICKS_PROFILE"] = profile
+
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    benchmark_script = os.path.join(project_root, "tests", "benchmark.py")
+
+    print(f"  Running benchmarks...")
+    result = subprocess.run(
+        ["uv", "run", "python", benchmark_script],
+        capture_output=False, text=True, env=env, cwd=project_root,
+    )
+
+    if result.returncode == 0:
+        print("  Verification passed")
+    else:
+        print("  Verification failed — check benchmark output above")
 
 
 if __name__ == "__main__":
