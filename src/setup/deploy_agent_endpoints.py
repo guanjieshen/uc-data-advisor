@@ -1,19 +1,18 @@
 """Deploy registered agent models using Databricks Agent Bricks SDK.
 
 Uses databricks.agents.deploy() for proper Agent Bricks deployment
-with built-in observability, Review App, and scaling.
+with built-in observability, Review App, and scaling. Deploys all agents in parallel.
 """
 
+import time
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
 
 def deploy_agent_endpoints(config: dict, w) -> dict:
-    """Deploy each registered agent model via Agent Bricks SDK.
-
-    Returns dict of {agent_name: endpoint_name}.
-    """
+    """Deploy each registered agent model via Agent Bricks SDK in parallel."""
     from databricks import agents
 
     infra = config.get("infrastructure", {})
@@ -24,79 +23,73 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
         print("  No registered models found — run 'register' step first")
         return {}
 
-    # Set MLflow experiment so agent traces are logged for real-time monitoring
     import mlflow
     experiment_name = f"/uc-data-advisor-{app_name}-traces"
     mlflow.set_experiment(experiment_name)
 
     print("=" * 60)
-    print("Deploying Agent Endpoints (Agent Bricks)")
+    print("Deploying Agent Endpoints (parallel)")
     print(f"  MLflow experiment: {experiment_name}")
     print("=" * 60)
 
-    endpoints = {}
-    for agent_name, model_info in registered.items():
+    workspace_host = config.get("workspace", {}).get("host", "")
+    env_vars = {
+        "DATABRICKS_HOST": workspace_host,
+        "SERVING_ENDPOINT": infra.get("serving_endpoint", ""),
+        "GENIE_SPACE_ID": infra.get("genie_space_id", ""),
+        "VS_INDEX_METADATA": infra.get("vs_index_metadata", ""),
+        "VS_INDEX_KNOWLEDGE": infra.get("vs_index_knowledge", ""),
+    }
+    env_vars = {k: v for k, v in env_vars.items() if v}
+
+    def _deploy_one(agent_name, model_info):
         ep_name = f"{app_name}-{agent_name}-agent"
         model_name = model_info["model_name"]
         version = model_info["version"]
-        model_uri = f"models:/{model_name}/{version}"
 
-        print(f"  [{agent_name}] Deploying {ep_name}...", end=" ", flush=True)
+        _wait_for_endpoint_ready(w, ep_name)
 
         try:
-            # Wait for any in-progress updates to finish
-            _wait_for_endpoint_ready(w, ep_name)
+            agents.delete_deployment(model_name=model_name)
+        except Exception:
+            pass
 
-            # Delete existing deployment to redeploy with new version
+        agents.deploy(
+            model_name=model_name,
+            model_version=int(version),
+            endpoint_name=ep_name,
+            scale_to_zero=True,
+            environment_vars=env_vars,
+            tags={"app": app_name, "agent": agent_name},
+        )
+
+        _configure_ai_gateway(w, ep_name, config)
+        _patch_endpoint_env_vars(w, ep_name, env_vars)
+
+        try:
+            agents.enable_trace_reviews(endpoint_name=ep_name)
+        except Exception:
+            pass
+
+        return agent_name, ep_name
+
+    endpoints = {}
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {
+            pool.submit(_deploy_one, name, info): name
+            for name, info in registered.items()
+        }
+        for future in as_completed(futures):
+            agent_name = futures[future]
             try:
-                agents.delete_deployment(model_name=model_name)
-                print("replacing...", end=" ", flush=True)
-            except Exception:
-                pass  # No existing deployment
+                name, ep_name = future.result()
+                endpoints[name] = ep_name
+                print(f"  [{name}] deployed → {ep_name}")
+            except Exception as e:
+                print(f"  [{agent_name}] FAILED: {e}")
+                logger.error(f"Failed to deploy {agent_name}: {e}", exc_info=True)
 
-            # Environment vars the agent model needs at serving time
-            workspace_host = config.get("workspace", {}).get("host", "")
-            secret_scope = infra.get("secret_scope", app_name)
-            env_vars = {
-                "DATABRICKS_HOST": workspace_host,
-                "SERVING_ENDPOINT": infra.get("serving_endpoint", ""),
-                "GENIE_SPACE_ID": infra.get("genie_space_id", ""),
-                "VS_INDEX_METADATA": infra.get("vs_index_metadata", ""),
-                "VS_INDEX_KNOWLEDGE": infra.get("vs_index_knowledge", ""),
-            }
-            # Filter out empty values (but keep DATABRICKS_TOKEN even though it looks like a template)
-            env_vars = {k: v for k, v in env_vars.items() if v}
-
-            # Deploy using Agent Bricks SDK
-            deployment = agents.deploy(
-                model_name=model_name,
-                model_version=int(version),
-                endpoint_name=ep_name,
-                scale_to_zero=True,
-                environment_vars=env_vars,
-                tags={"app": app_name, "agent": agent_name},
-            )
-
-            endpoints[agent_name] = ep_name
-            print("deployed")
-
-            # Add AI Gateway configuration (rate limits, usage tracking, guardrails)
-            _configure_ai_gateway(w, ep_name, config)
-
-            # Patch environment vars onto the endpoint (agents.deploy may not pass them through)
-            _patch_endpoint_env_vars(w, ep_name, env_vars)
-
-            # Enable trace reviews for observability
-            try:
-                agents.enable_trace_reviews(endpoint_name=ep_name)
-            except Exception:
-                pass  # Not critical
-
-        except Exception as e:
-            print(f"FAILED: {e}")
-            logger.error(f"Failed to deploy {agent_name}: {e}", exc_info=True)
-
-    # Grant app SP CAN_QUERY on agent endpoints
+    # Grant permissions
     app_sp = infra.get("app_sp_client_id", "")
     if app_sp and endpoints:
         _grant_endpoint_permissions(w, infra, config, endpoints, app_sp)
@@ -110,7 +103,6 @@ def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):
     try:
         ep = w.serving_endpoints.get(ep_name)
         if not ep.config or not ep.config.served_entities:
-            logger.warning(f"Endpoint {ep_name} has no served entities yet, skipping env var patch")
             return
         entities = []
         for entity in ep.config.served_entities:
@@ -127,13 +119,12 @@ def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):
             w.api_client.do("PUT", f"/api/2.0/serving-endpoints/{ep_name}/config", body={
                 "served_entities": entities,
             })
-            print(f"    Env vars patched on {ep_name}")
     except Exception as e:
         logger.warning(f"Failed to patch env vars on {ep_name}: {e}")
 
 
 def _configure_ai_gateway(w, ep_name: str, config: dict):
-    """Add AI Gateway configuration to an agent serving endpoint."""
+    """Add AI Gateway rate limits to an agent serving endpoint."""
     ai_gateway = {
         "rate_limits": [
             {"calls": 120, "key": "user", "renewal_period": "minute"},
@@ -149,18 +140,16 @@ def _configure_ai_gateway(w, ep_name: str, config: dict):
 
     try:
         w.api_client.do("PUT", f"/api/2.0/serving-endpoints/{ep_name}/ai-gateway", body=ai_gateway)
-        print(f"    AI Gateway configured on {ep_name}")
     except Exception as e:
         logger.warning(f"Failed to configure AI Gateway on {ep_name}: {e}")
 
 
 def _wait_for_endpoint_ready(w, ep_name: str, timeout: int = 600):
     """Wait for an endpoint to finish any in-progress config updates."""
-    import time
     try:
         ep = w.serving_endpoints.get(ep_name)
     except Exception:
-        return  # Endpoint doesn't exist yet
+        return
 
     start = time.time()
     deadline = start + timeout
@@ -169,7 +158,7 @@ def _wait_for_endpoint_ready(w, ep_name: str, timeout: int = 600):
         if "IN_PROGRESS" not in state and "UPDATING" not in state:
             return
         elapsed = int(time.time() - start)
-        print(f"\r  waiting ({elapsed}s)...", end="", flush=True)
+        print(f"\r  [{ep_name.split('-')[-2]}] waiting ({elapsed}s)...{' ' * 20}", end="", flush=True)
         time.sleep(15)
         try:
             ep = w.serving_endpoints.get(ep_name)
@@ -179,8 +168,7 @@ def _wait_for_endpoint_ready(w, ep_name: str, timeout: int = 600):
 
 
 def _grant_endpoint_permissions(w, infra, config, endpoints, app_sp):
-    """Grant permissions for agent endpoints to access LLM endpoint and UC."""
-    # Grant app SP CAN_QUERY on each agent endpoint
+    """Grant permissions for agent endpoints."""
     for agent_name, ep_name in endpoints.items():
         try:
             ep = w.serving_endpoints.get(ep_name)
@@ -193,36 +181,3 @@ def _grant_endpoint_permissions(w, infra, config, endpoints, app_sp):
             print(f"    Granted app SP CAN_QUERY on {ep_name}")
         except Exception as e:
             logger.warning(f"Failed to grant app SP on {ep_name}: {e}")
-
-    # Grant each agent endpoint's creator CAN_QUERY on the LLM endpoint
-    # Agent endpoints run as their creator's identity when calling other endpoints
-    llm_ep_name = infra.get("serving_endpoint", "")
-    if llm_ep_name:
-        try:
-            llm_ep = w.serving_endpoints.get(llm_ep_name)
-            acl_entries = []
-
-            # Collect unique creators from agent endpoints
-            creators = set()
-            for ep_name in endpoints.values():
-                try:
-                    ep = w.serving_endpoints.get(ep_name)
-                    if ep.creator:
-                        creators.add(ep.creator)
-                except Exception:
-                    pass
-
-            for creator in creators:
-                # Determine if creator is SP or user
-                if "@" in creator:
-                    acl_entries.append({"user_name": creator, "permission_level": "CAN_QUERY"})
-                else:
-                    acl_entries.append({"service_principal_name": creator, "permission_level": "CAN_QUERY"})
-
-            if acl_entries:
-                w.api_client.do("PATCH", f"/api/2.0/permissions/serving-endpoints/{llm_ep.id}", body={
-                    "access_control_list": acl_entries,
-                })
-                print(f"    Granted agent endpoint creators CAN_QUERY on {llm_ep_name}: {creators}")
-        except Exception as e:
-            logger.warning(f"Failed to grant on LLM endpoint: {e}")
