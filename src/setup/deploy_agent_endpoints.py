@@ -168,31 +168,38 @@ def _wait_for_endpoint_ready(w, ep_name: str, timeout: int = 600):
 
 
 def _grant_endpoint_permissions(w, infra, config, endpoints, app_sp):
-    """Grant permissions for agent endpoints."""
+    """Grant permissions for agent endpoints using agents SDK and CLI fallback."""
+    from databricks.agents import set_permissions, PermissionLevel
+    import subprocess
+
+    registered = infra.get("registered_models", {})
+    workspace = config.get("workspace", {})
+    profile = workspace.get("profile", "")
+
     for agent_name, ep_name in endpoints.items():
-        try:
-            # Retry getting endpoint ID (may not be available immediately after deploy)
-            ep_id = None
-            for _ in range(6):
-                try:
-                    resp = w.api_client.do("GET", f"/api/2.0/serving-endpoints/{ep_name}")
-                    ep_id = resp.get("id")
-                    if ep_id:
-                        break
-                except Exception:
-                    pass
-                time.sleep(10)
+        model_info = registered.get(agent_name, {})
+        model_name = model_info.get("model_name", "")
 
-            if not ep_id:
-                logger.warning(f"Could not get ID for {ep_name} after retries, skipping")
-                continue
+        # Grant via agents SDK (works with user emails)
+        grant_principal = config.get("grant_principal", {})
+        if grant_principal.get("type") == "user" and grant_principal.get("name"):
+            try:
+                set_permissions(model_name, [grant_principal["name"]], PermissionLevel.CAN_QUERY)
+                print(f"    Granted {grant_principal['name']} CAN_QUERY on {ep_name}")
+            except Exception as e:
+                logger.warning(f"Failed to grant user on {ep_name}: {e}")
 
-            w.api_client.do("PATCH", f"/api/2.0/permissions/serving-endpoints/{ep_id}", body={
-                "access_control_list": [{
-                    "service_principal_name": app_sp,
-                    "permission_level": "CAN_QUERY",
-                }],
-            })
-            print(f"    Granted app SP CAN_QUERY on {ep_name}")
-        except Exception as e:
-            logger.warning(f"Failed to grant app SP on {ep_name}: {e}")
+        # Grant app SP via CLI (permissions API needs endpoint ID which may not be available yet)
+        if app_sp:
+            try:
+                cmd = ["databricks", "serving-endpoints", "update-permissions", ep_name,
+                       "--json", f'{{"access_control_list":[{{"service_principal_name":"{app_sp}","permission_level":"CAN_QUERY"}}]}}']
+                if profile:
+                    cmd += ["-p", profile]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    print(f"    Granted app SP CAN_QUERY on {ep_name}")
+                else:
+                    logger.warning(f"CLI grant failed on {ep_name}: {result.stderr[:200]}")
+            except Exception as e:
+                logger.warning(f"Failed to grant app SP on {ep_name}: {e}")
