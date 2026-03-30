@@ -73,7 +73,7 @@ def _teardown_agent_endpoints(infra: dict, catalog: str, app_name: str) -> None:
     from databricks import agents
 
     print("  [1/9] Agent endpoints")
-    for agent in ["discovery", "metrics", "qa"]:
+    for agent in ["discovery", "metrics", "qa", "orchestrator"]:
         model_name = f"{catalog}.default.{app_name.replace('-', '_')}_{agent}_agent"
         ep_name = f"{app_name}-{agent}-agent"
         try:

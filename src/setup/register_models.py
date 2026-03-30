@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
-AGENTS = ["discovery", "metrics", "qa"]
+AGENTS = ["discovery", "metrics", "qa", "orchestrator"]
 
 MODEL_DEF_TEMPLATE = textwrap.dedent("""\
     import mlflow
@@ -25,6 +25,7 @@ AGENT_DEFS = {
     "discovery": ("discovery", "DiscoveryAgent"),
     "metrics": ("metrics", "MetricsAgent"),
     "qa": ("qa", "QAAgent"),
+    "orchestrator": ("orchestrator_agent", "OrchestratorAgent"),
 }
 
 

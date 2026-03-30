@@ -47,10 +47,11 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     }
     env_vars = {k: v for k, v in env_vars.items() if v}
 
-    def _deploy_one(agent_name, model_info):
+    def _deploy_one(agent_name, model_info, deploy_env_vars=None):
         ep_name = f"{app_name}-{agent_name}-agent"
         model_name = model_info["model_name"]
         version = model_info["version"]
+        ep_env = deploy_env_vars or env_vars
 
         _wait_for_endpoint_ready(w, ep_name)
 
@@ -64,14 +65,14 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
             model_version=int(version),
             endpoint_name=ep_name,
             scale_to_zero=True,
-            environment_vars=env_vars,
+            environment_vars=ep_env,
             tags={"app": app_name, "agent": agent_name},
         )
 
         # Wait for endpoint to be READY before patching config
         _wait_for_endpoint_ready(w, ep_name)
         _configure_ai_gateway(w, ep_name, config)
-        _patch_endpoint_env_vars(w, ep_name, env_vars)
+        _patch_endpoint_env_vars(w, ep_name, ep_env)
 
         try:
             agents.enable_trace_reviews(endpoint_name=ep_name)
@@ -80,11 +81,16 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
 
         return agent_name, ep_name
 
+    # Deploy sub-agents first (parallel), then orchestrator (needs their endpoint names)
+    sub_agents = {k: v for k, v in registered.items() if k != "orchestrator"}
+    orchestrator_model = registered.get("orchestrator")
+
+    # Phase 1: Deploy sub-agents in parallel
     endpoints = {}
     with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {
             pool.submit(_deploy_one, name, info): name
-            for name, info in registered.items()
+            for name, info in sub_agents.items()
         }
         for future in as_completed(futures):
             agent_name = futures[future]
@@ -95,6 +101,19 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
             except Exception as e:
                 print(f"  [{agent_name}] FAILED: {e}")
                 logger.error(f"Failed to deploy {agent_name}: {e}", exc_info=True)
+
+    # Phase 2: Deploy orchestrator with sub-agent endpoint names
+    if orchestrator_model:
+        orch_env = dict(env_vars)
+        for agent_name, ep_name in endpoints.items():
+            orch_env[f"{agent_name.upper()}_AGENT_ENDPOINT"] = ep_name
+        try:
+            name, ep_name = _deploy_one("orchestrator", orchestrator_model, deploy_env_vars=orch_env)
+            endpoints[name] = ep_name
+            print(f"  [{name}] deployed → {ep_name}")
+        except Exception as e:
+            print(f"  [orchestrator] FAILED: {e}")
+            logger.error(f"Failed to deploy orchestrator: {e}", exc_info=True)
 
     print(f"  Deployed {len(endpoints)}/{len(registered)} agent endpoints")
     print("  Note: run '--step grant-agent-permissions' after endpoints are READY")
