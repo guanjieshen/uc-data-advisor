@@ -170,19 +170,16 @@ def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):
 
 
 def _configure_ai_gateway(w, ep_name: str, config: dict):
-    """Add AI Gateway rate limits to an agent serving endpoint."""
-    ai_gateway = {
-        "rate_limits": [
-            {"calls": 120, "key": "user", "renewal_period": "minute"},
-            {"calls": 500, "key": "endpoint", "renewal_period": "minute"},
-        ],
-    }
+    """Add AI Gateway guardrails to an agent serving endpoint (if enabled)."""
+    if not config.get("enable_ai_gateway_guardrails", False):
+        return
 
-    if config.get("enable_ai_gateway_guardrails", False):
-        ai_gateway["guardrails"] = {
+    ai_gateway = {
+        "guardrails": {
             "input": {"safety": True, "pii": {"behavior": "NONE"}},
             "output": {"safety": False, "pii": {"behavior": "NONE"}},
-        }
+        },
+    }
 
     try:
         w.api_client.do("PUT", f"/api/2.0/serving-endpoints/{ep_name}/ai-gateway", body=ai_gateway)
