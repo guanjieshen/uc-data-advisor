@@ -69,18 +69,22 @@ GENERAL_PROMPT = generated.get("prompts", {}).get("general",
     "You are the UC Data Advisor, a helpful assistant for discovering and understanding datasets in Unity Catalog. Respond warmly and briefly.")
 
 
+def _llm_chat(messages: list[dict], max_tokens: int = 512, temperature: float = 0) -> str:
+    """Call the LLM serving endpoint via raw API."""
+    resp = w.api_client.do(
+        "POST",
+        f"/serving-endpoints/{serving_endpoint}/invocations",
+        body={"messages": messages, "max_tokens": max_tokens, "temperature": temperature},
+    )
+    return (resp.get("choices", [{}])[0].get("message", {}).get("content", "") or "").strip()
+
+
 def classify_intent(question: str) -> str:
     """Classify a question into an agent category via the LLM endpoint."""
-    resp = w.serving_endpoints.query(
-        name=serving_endpoint,
-        messages=[
-            {"role": "system", "content": CLASSIFY_PROMPT},
-            {"role": "user", "content": question},
-        ],
+    intent = _llm_chat(
+        [{"role": "system", "content": CLASSIFY_PROMPT}, {"role": "user", "content": question}],
         max_tokens=16,
-        temperature=0,
-    )
-    intent = (resp.choices[0].message.content or "").strip().lower()
+    ).lower()
     if intent not in ("discovery", "metrics", "qa", "general"):
         intent = "discovery"
     return intent
@@ -88,13 +92,11 @@ def classify_intent(question: str) -> str:
 
 def call_agent(endpoint_name: str, question: str) -> str:
     """Call an agent serving endpoint and extract the text response."""
-    payload = {"input": [{"role": "user", "content": question}]}
     resp = w.api_client.do(
         "POST",
         f"/serving-endpoints/{endpoint_name}/invocations",
-        body=payload,
+        body={"input": [{"role": "user", "content": question}]},
     )
-    # Extract text from ResponsesAgent output format
     for item in resp.get("output", []):
         if item.get("type") == "message":
             for content in item.get("content", []):
@@ -105,16 +107,10 @@ def call_agent(endpoint_name: str, question: str) -> str:
 
 def general_response(question: str) -> str:
     """Handle general/greeting messages without tools."""
-    resp = w.serving_endpoints.query(
-        name=serving_endpoint,
-        messages=[
-            {"role": "system", "content": GENERAL_PROMPT},
-            {"role": "user", "content": question},
-        ],
-        max_tokens=512,
-        temperature=0.5,
+    return _llm_chat(
+        [{"role": "system", "content": GENERAL_PROMPT}, {"role": "user", "content": question}],
+        max_tokens=512, temperature=0.5,
     )
-    return resp.choices[0].message.content or ""
 
 # COMMAND ----------
 
