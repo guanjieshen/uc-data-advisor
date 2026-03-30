@@ -1,98 +1,132 @@
 # UC Data Advisor
 
-A multi-agent system that enables natural language dataset discovery over Unity Catalog.
+A multi-agent system that enables natural language dataset discovery over Unity Catalog. Deploys as a Databricks App with agents running on individual Model Serving endpoints.
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    subgraph SERVING["SERVING & ORCHESTRATION"]
-        MS[("Databricks Model Serving<br/><i>Hosts All Agents</i><br/><i>Endpoint for Teams & Web App</i>")]
-        MLF["MLflow Tracing<br/><i>Agent Observability</i>"]
-
-        MS --> ORCH
-
-        subgraph ORCH_BOX[" "]
-            ORCH["Orchestrator Agent<br/><i>LLM Intent Classifier</i><br/><i>Routes to Sub-Agents</i>"]
-        end
+    subgraph APP["DATABRICKS APP"]
+        FE["React Frontend"]
+        API["FastAPI Backend"]
+        ORCH["Orchestrator<br/><i>LLM Intent Classifier</i>"]
+        LB["Lakebase<br/><i>Session Memory & Feedback</i>"]
+        FE --> API --> ORCH
+        ORCH -.-> LB
     end
 
-    subgraph AGENTS["AGENT LAYER"]
-        DA["Data Discovery Agent<br/><i>Dataset Existence · Schema</i><br/><b>Tables · Columns · Descriptions</b><br/>Agent Bricks"]
-        DM["Data Metrics Agent<br/><i>Compute Metrics on</i><br/><b>Unity Catalog Assets</b><br/>Agent Bricks"]
-        QA["Q&A Agent<br/><i>RAG over TIS D&A</i><br/><b>FAQ & Processes</b><br/>Agent Bricks"]
+    subgraph SERVING["MODEL SERVING ENDPOINTS"]
+        DA["Discovery Agent<br/><i>Dataset Search · Schema · Columns</i>"]
+        DM["Metrics Agent<br/><i>NL-to-SQL via Genie</i>"]
+        QA["Q&A Agent<br/><i>RAG over Knowledge Base</i>"]
     end
 
-    subgraph LLM["LLM GATEWAY & MODEL"]
-        GW["Databricks AI Gateway<br/><i>Rate Limiting · Monitoring · Governance</i>"]
-        CLAUDE["Claude Opus 4.5<br/><i>Foundation Model</i>"]
-        GW -->|inference| CLAUDE
+    subgraph LLM["LLM"]
+        CLAUDE["Foundation Model<br/><i>Claude Opus 4.6</i>"]
     end
 
     subgraph TOOLS["TOOLS & RETRIEVAL"]
-        UC_API["UC API Tools<br/><i>List · Describe · Search</i><br/><b>Catalogs · Schemas · Tables</b>"]
-        VS1["Vector Index<br/><i>UC Metadata</i><br/><b>Semantic Discovery</b>"]
-        GENIE["Genie Space<br/><i>NL → SQL Metrics</i><br/><b>Databricks Genie</b>"]
-        LB["Lakebase<br/><i>Session Memory</i><br/><b>Conversation History</b>"]
-        VS2["Vector Index<br/><i>TIS D&A Knowledge</i><br/><b>FAQ · Onboarding · Docs</b>"]
+        UC_API["UC API Tools<br/><i>List · Describe · Search</i>"]
+        VS1["Vector Index<br/><i>UC Metadata</i>"]
+        GENIE["Genie Space<br/><i>NL to SQL</i>"]
+        VS2["Vector Index<br/><i>Knowledge Base</i>"]
     end
 
     subgraph DATA["DATA LAYER"]
-        UCat[("Unity Catalog<br/><b>Enterprise Data Marketplace</b><br/><i>Catalogs · Schemas · Tables · Columns · Descriptions</i>")]
+        UCat[("Unity Catalog<br/><i>Source Catalogs</i>")]
     end
 
-    %% Orchestrator to Agents
     ORCH -->|discovery| DA
     ORCH -->|metrics| DM
     ORCH -->|Q&A| QA
 
-    %% Agents to LLM
-    DA -->|LLM| GW
-    DM -->|LLM| GW
-    QA -->|LLM| GW
+    DA -->|LLM| CLAUDE
+    DM -->|LLM| CLAUDE
+    QA -->|LLM| CLAUDE
+    ORCH -->|classify| CLAUDE
 
-    %% Agent to Tools mappings
     DA -.-> UC_API
     DA -.-> VS1
     DM -.-> GENIE
-    ORCH -.-> LB
     QA -.-> VS2
 
-    %% Tools to Data
     GENIE --> UCat
     UC_API --> UCat
 
-    %% Styling
-    classDef serving fill:#e8f4f8,stroke:#0077b6
-    classDef agent fill:#fff3e0,stroke:#ff9800
+    classDef app fill:#e8f4f8,stroke:#0077b6
+    classDef serving fill:#fff3e0,stroke:#ff9800
     classDef llm fill:#fce4ec,stroke:#e91e63
     classDef tools fill:#f3e5f5,stroke:#9c27b0
     classDef data fill:#e8f5e9,stroke:#4caf50
-    classDef orchestrator fill:#e3f2fd,stroke:#2196f3
 
-    class MS,MLF serving
-    class DA,DM,QA agent
-    class GW,CLAUDE llm
-    class UC_API,VS1,GENIE,LB,VS2 tools
+    class FE,API,ORCH,LB app
+    class DA,DM,QA serving
+    class CLAUDE llm
+    class UC_API,VS1,GENIE,VS2 tools
     class UCat data
-    class ORCH orchestrator
 ```
 
 ## Components
 
 | Layer | Component | Purpose |
 |-------|-----------|---------|
-| **Orchestration** | Orchestrator Agent | Routes queries to specialized sub-agents |
-| **Agents** | Data Discovery | Find datasets by name, schema, description |
-| **Agents** | Data Metrics | Compute metrics via Genie SQL generation |
-| **Agents** | Q&A | RAG over documentation and FAQ |
-| **LLM** | AI Gateway + Claude | Rate limiting, monitoring, inference |
-| **Tools** | UC API, Vector Search, Genie, Lakebase | Metadata access, semantic search, session memory |
+| **App** | Orchestrator | LLM intent classifier that routes to sub-agents |
+| **App** | Lakebase | Session memory and user feedback storage |
+| **Model Serving** | Discovery Agent | Find datasets by name, schema, description via UC API + Vector Search |
+| **Model Serving** | Metrics Agent | Answer analytical questions via Genie Space (NL-to-SQL) |
+| **Model Serving** | Q&A Agent | RAG over governance FAQs and knowledge base |
+| **LLM** | Foundation Model | Pay-per-token model for all inference (classification + agent reasoning) |
+| **Tools** | UC API, Vector Search, Genie | Metadata access, semantic search, SQL generation |
 
-## Getting Started
+## Key Design Decisions
 
-See [docs/architecture.md](docs/architecture.md) for detailed component information.
+- **Agents on Model Serving**: Each agent runs on its own endpoint with scale-to-zero, enabling independent scaling and versioning
+- **Orchestrator in App**: Lightweight classifier stays in the FastAPI app (no heavy compute, manages sessions)
+- **OAuth M2M for agents**: Auto-created SP with secrets in Databricks secret scope for outbound API calls from Model Serving containers
+- **Catalog scoping**: Agents only see catalogs listed in `source_catalogs` config via `SOURCE_CATALOGS` env var
+- **MLflow ResponsesAgent**: All agents extend `mlflow.pyfunc.ResponsesAgent` for built-in tracing and model registry
 
-## License
+## Quick Start
 
-See LICENSE file for details.
+```bash
+git clone https://github.com/guanjieshen/uc-data-advisor.git
+cd uc-data-advisor
+cp config/advisor_config.example.yaml config/my_config.yaml
+# Edit my_config.yaml with your catalogs and workspace
+uv run python -m src.setup.run --config config/my_config.yaml
+```
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for full deployment guide, config reference, benchmarks, and troubleshooting.
+
+## Project Structure
+
+```
+app/                          # Databricks App (deployed to workspace)
+  server/
+    agents/
+      base.py                 # ResponsesBaseAgent with tool-calling loop
+      orchestrator.py         # Intent classifier + RemoteAgentClient
+      discovery.py            # UC metadata discovery agent
+      metrics.py              # Genie Space metrics agent
+      qa.py                   # Knowledge base Q&A agent
+    tools/                    # UC API, Genie, Vector Search tool implementations
+    routes/                   # FastAPI routes (chat, feedback, health)
+    config.py                 # Auth chain (App SP, OAuth M2M, CLI)
+    advisor_config.py         # Runtime config loader
+  ui/                         # React frontend
+src/
+  setup/
+    run.py                    # Pipeline orchestrator (9 steps + teardown)
+    provision_infrastructure.py  # Creates all Databricks resources
+    audit_metadata.py         # Walks UC catalogs for metadata
+    generate_*.py             # Content generation (prompts, KB, benchmarks)
+    register_models.py        # MLflow model registration (parallel)
+    deploy_agent_endpoints.py # Agent Bricks deployment (parallel)
+    deploy.py                 # Artifact + app deployment
+    teardown.py               # Full resource cleanup
+config/
+  advisor_config.example.yaml # Template config
+tests/
+  benchmark.py               # CLI benchmark script
+  benchmark_notebook.py       # Databricks notebook benchmark
+```
