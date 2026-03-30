@@ -24,9 +24,15 @@ CONFIG_PATH = dbutils.widgets.get("config_path").strip()
 import json, time, yaml, requests
 from databricks.sdk import WorkspaceClient
 
-# Auth — uses notebook's built-in credentials
+# Auth — use dbutils API token (works for external app URLs)
+try:
+    token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
+except Exception:
+    # Fall back to SDK auth
+    w = WorkspaceClient()
+    token = w.config.authenticate()["Authorization"].replace("Bearer ", "")
+
 w = WorkspaceClient()
-token = w.config.authenticate()["Authorization"].replace("Bearer ", "")
 headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 # Resolve app URL from config if not provided
