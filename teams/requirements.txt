@@ -1,0 +1,5 @@
+microsoft-agents-hosting-aiohttp>=0.6.0
+microsoft-agents-hosting-teams>=0.1.0
+microsoft-agents-authentication-msal>=0.3.0
+databricks-sdk>=0.50.0
+pyyaml>=6.0
