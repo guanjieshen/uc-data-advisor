@@ -1,17 +1,17 @@
 """UC Data Advisor Setup Pipeline.
 
-Orchestrates: provision → audit → generate → deploy.
+Orchestrates: provision → grant-uc → audit → generate → register →
+  deploy-agents → grant-agent-permissions → deploy → verify.
 
 Usage:
-  uv run python -m src.setup.run --config config/advisor_config.yaml
-  uv run python -m src.setup.run --config config/advisor_config.yaml --step provision
-  uv run python -m src.setup.run --config config/advisor_config.yaml --step audit
-  uv run python -m src.setup.run --config config/advisor_config.yaml --step generate
-  uv run python -m src.setup.run --config config/advisor_config.yaml --step deploy
+  uv run python -m src.setup.run --config config/my_config.yaml
+  uv run python -m src.setup.run --config config/my_config.yaml --step provision
+  uv run python -m src.setup.run --config config/my_config.yaml --step teardown
 """
 
 import argparse
 import os
+import sys
 import logging
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 def main():
     parser = argparse.ArgumentParser(description="UC Data Advisor Setup Pipeline")
     parser.add_argument("--config", default="config/advisor_config.yaml", help="Path to config file")
-    parser.add_argument("--step", choices=["provision", "grant-uc", "audit", "generate", "deploy", "register", "deploy-agents", "grant-agent-permissions", "verify", "all"], default="all")
+    parser.add_argument("--step", choices=["provision", "grant-uc", "audit", "generate", "deploy", "register", "deploy-agents", "grant-agent-permissions", "verify", "teardown", "all"], default="all")
     args = parser.parse_args()
 
     from .config_loader import load_config, save_config
@@ -70,6 +70,7 @@ def main():
         "deploy-agents": _step_deploy_agents,
         "grant-agent-permissions": _step_grant_agent_permissions,
         "verify": _step_verify,
+        "teardown": _step_teardown,
     }
 
     if args.step == "all":
@@ -168,6 +169,12 @@ def _step_grant_agent_permissions(config, w):
     grant_agent_permissions(config, w)
 
 
+def _step_teardown(config, w):
+    """Delete all resources created by the setup pipeline."""
+    from .teardown import teardown
+    teardown(config, w)
+
+
 def _step_verify(config, w):
     """Run benchmark questions against the deployed app to verify it works."""
     import subprocess
@@ -242,7 +249,7 @@ def _step_verify(config, w):
 
     print(f"  Running benchmarks...")
     result = subprocess.run(
-        ["uv", "run", "python", benchmark_script],
+        [sys.executable, benchmark_script],
         capture_output=False, text=True, env=env, cwd=project_root,
     )
 

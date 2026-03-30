@@ -34,6 +34,7 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
 
     workspace_host = config.get("workspace", {}).get("host", "")
     scope = infra.get("secret_scope", app_name)
+    source_catalogs = ",".join(config.get("source_catalogs", []))
     env_vars = {
         "DATABRICKS_HOST": workspace_host,
         "DATABRICKS_CLIENT_ID": "{{secrets/" + scope + "/sp-client-id}}",
@@ -42,6 +43,7 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
         "GENIE_SPACE_ID": infra.get("genie_space_id", ""),
         "VS_INDEX_METADATA": infra.get("vs_index_metadata", ""),
         "VS_INDEX_KNOWLEDGE": infra.get("vs_index_knowledge", ""),
+        "SOURCE_CATALOGS": source_catalogs,
     }
     env_vars = {k: v for k, v in env_vars.items() if v}
 

@@ -1,8 +1,10 @@
 """Unity Catalog metadata tool implementations.
 
-All operations are scoped to the source_catalogs defined in the advisor config.
+All operations are scoped to the source_catalogs defined in the advisor config
+or the SOURCE_CATALOGS env var (used on Model Serving).
 """
 
+import os
 from databricks.sdk import WorkspaceClient
 from .config import get_workspace_client
 from .advisor_config import get_config
@@ -19,6 +21,11 @@ def _get_client() -> WorkspaceClient:
 
 def _allowed_catalogs() -> set[str]:
     """Get the set of source catalogs this deployment is scoped to."""
+    # Model Serving: SOURCE_CATALOGS env var (comma-separated)
+    env_catalogs = os.environ.get("SOURCE_CATALOGS", "")
+    if env_catalogs:
+        return {c.strip() for c in env_catalogs.split(",") if c.strip()}
+    # App runtime: from config file
     return set(get_config().get("source_catalogs", []))
 
 
