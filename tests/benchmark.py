@@ -88,7 +88,7 @@ def run_benchmark():
         start = time.time()
         try:
             resp = requests.post(
-                CHAT_ENDPOINT, json=payload, headers=headers, timeout=120
+                CHAT_ENDPOINT, json=payload, headers=headers, timeout=300
             )
             elapsed = time.time() - start
             total_time += elapsed
@@ -111,15 +111,26 @@ def run_benchmark():
             )
             has_content = len(response_text.strip()) > 10
 
-            status = "PASS" if (routing_ok and contains_ok and has_content) else "WARN"
+            error_phrases = ["unavailable", "not properly configured", "misconfigured",
+                             "unable to", "couldn't be completed", "error processing"]
+            response_has_error = any(p in response_text.lower() for p in error_phrases)
+
             if not has_content:
                 status = "FAIL"
+            elif not routing_ok or not contains_ok:
+                status = "WARN"
+            elif response_has_error:
+                status = "WARN"
+            else:
+                status = "PASS"
 
             print(f"  STATUS: {status} | Agent: {actual_agent} (expected {bench['expected_agent']}) | {elapsed:.1f}s")
             print(f"  Response ({len(response_text)} chars): {response_text[:200]}...")
 
             if not routing_ok:
                 print(f"  ⚠ ROUTING MISMATCH: got {actual_agent}, expected {bench['expected_agent']}")
+            if response_has_error:
+                print(f"  ⚠ RESPONSE ERROR: agent returned an error/unavailable message")
 
             results.append({
                 **bench, "status": status, "elapsed": elapsed,

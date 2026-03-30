@@ -263,7 +263,6 @@ def _deploy_app(config, w):
     """Generate app.yaml from config and deploy the app."""
     infra = config.get("infrastructure", {})
     app_name = infra.get("app_name", "uc-data-advisor")
-    identity = config.get("grant_principal", {})
     lb = infra.get("lakebase", {})
 
     print("  [app] Generating app.yaml...")
@@ -294,7 +293,7 @@ env:
   - name: PGDATABASE
     value: "{lb.get('database', '')}"
   - name: PGUSER
-    value: "{infra.get('app_sp_client_id', identity.get('name', ''))}"
+    value: "{infra.get('app_sp_client_id', '')}"
   - name: LAKEBASE_INSTANCE
     value: "{lb.get('instance', '')}"
   - name: ADVISOR_CONFIG_PATH

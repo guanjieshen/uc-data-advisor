@@ -46,7 +46,12 @@
       "mcp__chrome-devtools__wait_for",
       "mcp__chrome-devtools__evaluate_script",
       "WebFetch(domain:docs.databricks.com)",
-      "WebFetch(domain:pypi.org)"
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:api-docs.databricks.com)",
+      "WebFetch(domain:mlflow.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.mlflow.org)",
+      "WebFetch(domain:databricks-sdk-py.readthedocs.io)"
     ]
   }
 }

@@ -38,7 +38,8 @@ def generate_benchmarks(config: dict) -> list[dict]:
             "category": "discovery",
         })
 
-    # Metrics questions (from actual metric view measures)
+    # Metrics questions — from metric views if available, otherwise from source tables
+    metrics_added = 0
     for view_name, view_sql in list(metric_views.items())[:2]:
         measure_name = _extract_first_count_measure(view_sql)
         if measure_name:
@@ -48,6 +49,36 @@ def generate_benchmarks(config: dict) -> list[dict]:
                 "expect_contains": [],
                 "category": "metrics",
             })
+            metrics_added += 1
+
+    if metrics_added == 0 and tables:
+        # Generate metrics questions from source tables
+        # Use analytical phrasing to avoid discovery misclassification
+        numeric_cols = [c for c in tables[0].get("columns", []) if c.get("type") in ("bigint", "int", "double", "float", "decimal")]
+        if numeric_cols:
+            benchmarks.append({
+                "question": f"What is the average {numeric_cols[0]['name']} across all records?",
+                "expected_agent": "metrics",
+                "expect_contains": [],
+                "category": "metrics",
+            })
+        else:
+            benchmarks.append({
+                "question": f"Give me a count breakdown by month from {tables[0]['name']}",
+                "expected_agent": "metrics",
+                "expect_contains": [],
+                "category": "metrics",
+            })
+        if len(tables) > 2:
+            t = tables[2]
+            cols = [c["name"] for c in t.get("columns", []) if c.get("type") in ("string", "varchar")]
+            if cols:
+                benchmarks.append({
+                    "question": f"Show me the distinct values of {cols[0]} in {t['name']}",
+                    "expected_agent": "metrics",
+                    "expect_contains": [],
+                    "category": "metrics",
+                })
 
     # QA questions (from knowledge base)
     qa_questions = [faq for faq in knowledge_base if faq.get("category") in ("access", "quality", "general")]

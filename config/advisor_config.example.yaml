@@ -2,7 +2,7 @@
 # UC Data Advisor Configuration — Example
 # ============================================================
 # Copy this file:  cp config/advisor_config.example.yaml config/advisor_config.yaml
-# Edit the 3 sections below, then run:
+# Edit the 2 sections below, then run:
 #   uv run python -m src.setup.run --config config/advisor_config.yaml
 # ============================================================
 
@@ -27,15 +27,6 @@ workspace:
 # workspace:
 #   host: "https://my-workspace.cloud.databricks.com"
 
-# 3. Grant principal (REQUIRED)
-# Additional principal to grant UC/endpoint/Lakebase access to during setup.
-# The app's auto-created SP always gets grants automatically.
-# type: "service_principal" → auto-grants all permissions
-# type: "user" → prints required grants for manual application by an admin
-grant_principal:
-  type: service_principal
-  name: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # SP client ID or user email
-
 # --- Optional overrides ---
 
 # App name — MUST be unique per deployment on the same workspace.
@@ -43,6 +34,7 @@ grant_principal:
 # Default: derived from catalog prefix (e.g., "my_catalog_*" -> "my-catalog-advisor")
 # app_name: my-project-advisor
 
+# warehouse_id: "abc123def456"                 # SQL warehouse ID (auto-discovered if omitted)
 # advisor_catalog: my_project_advisor_catalog  # Default: {app_name}_catalog
 # external_location: "my-ext-location-name"    # UC external location name for catalog storage (auto-detected if omitted)
 # serving_model: databricks-claude-opus-4-6    # Upstream foundation model

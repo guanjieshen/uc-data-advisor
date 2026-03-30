@@ -13,38 +13,25 @@ IS_MODEL_SERVING = bool(os.environ.get("DATABRICKS_SERVING_ENDPOINT"))
 
 
 def get_workspace_client() -> WorkspaceClient:
-    """Get WorkspaceClient authenticated as a service principal or via CLI."""
+    """Get WorkspaceClient with automatic credential detection."""
+    # 1. Databricks App or Model Serving — auto-injected credentials
     if IS_DATABRICKS_APP or IS_MODEL_SERVING:
-        # Auto-injected SPN credentials (App or Model Serving)
         return WorkspaceClient()
 
-    # Try MLflow's auth utils (works on Model Serving containers and notebooks)
+    # 2. Explicit host + token from env
     host = os.environ.get("DATABRICKS_HOST", "")
     token = os.environ.get("DATABRICKS_TOKEN", "")
-    if host and not token:
-        try:
-            from mlflow.utils.databricks_utils import get_databricks_host_creds
-            creds = get_databricks_host_creds()
-            if creds and creds.token:
-                return WorkspaceClient(host=host, token=creds.token)
-        except Exception:
-            pass
-
-    # Explicit host + token from env
     if host and token:
         return WorkspaceClient(host=host, token=token)
 
-    # Local dev: try OAuth M2M
+    # 3. OAuth M2M with SPN credentials
     client_id = os.environ.get("DATABRICKS_CLIENT_ID")
     client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET")
     if all([host, client_id, client_secret]):
-        return WorkspaceClient(
-            host=host,
-            client_id=client_id,
-            client_secret=client_secret,
-        )
+        return WorkspaceClient(host=host, client_id=client_id, client_secret=client_secret)
 
-    # Fall back to default SDK auth (CLI profile, env vars, etc.)
+    # 4. Default SDK auth (CLI profile, env vars, etc.)
+    #    On Model Serving containers, this uses the container's managed identity
     return WorkspaceClient()
 
 

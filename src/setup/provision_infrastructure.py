@@ -10,7 +10,6 @@ import json
 import os
 import time
 import logging
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -42,22 +41,20 @@ def provision(config: dict, w) -> dict:
     """Provision all infrastructure. Returns updated infrastructure dict."""
     infra = config.get("infrastructure", {})
     app_name = _derive_app_name(config)
-    # All resource names are derived from app_name for uniqueness
     advisor_catalog = config.get("advisor_catalog", f"{app_name.replace('-', '_')}_catalog")
     serving_model = config.get("serving_model", "databricks-claude-opus-4-6")
-    config.get("embedding_model", "databricks-bge-large-en")
-    identity = config.get("grant_principal", {"type": "service_principal", "name": ""})
 
     infra["app_name"] = app_name
     infra["advisor_catalog"] = advisor_catalog
     infra["advisor_schema"] = "default"
+    if config.get("warehouse_id"):
+        infra["warehouse_id"] = config["warehouse_id"]
 
     print("=" * 60)
     print("UC Data Advisor — Infrastructure Provisioning")
     print("=" * 60)
     print(f"  App name:        {app_name}")
     print(f"  Advisor catalog: {advisor_catalog}")
-    print(f"  App identity:    {identity['type']} ({identity['name']})")
     print()
 
     # Step 1: Discover warehouse
@@ -66,28 +63,45 @@ def provision(config: dict, w) -> dict:
     # Step 2: Create advisor catalog + schema
     _create_catalog_and_schema(w, infra, config)
 
-    # Step 3: Create Vector Search endpoint
+    # Step 3: Create Vector Search endpoint + set index names
     infra["vs_endpoint"] = _create_vs_endpoint(w, infra, app_name)
+    infra["vs_index_metadata"] = f"{advisor_catalog}.default.uc_metadata_vs_index"
+    infra["vs_index_knowledge"] = f"{advisor_catalog}.default.knowledge_vs_index"
 
-    # Step 4: Create Lakebase instance
-    _create_lakebase(w, infra, app_name, identity)
+    # Step 4: Create Databricks App (early — captures auto-created SP for grants)
+    _create_app(w, infra, app_name, config)
 
-    # Step 5: Set LLM serving endpoint (use foundation model directly, no proxy)
+    app_sp = infra.get("app_sp_client_id", "")
+    if not app_sp:
+        raise RuntimeError(
+            "Databricks App did not return a service_principal_client_id. "
+            "Check that the app was created successfully."
+        )
+
+    # Step 5: Create Lakebase instance
+    _create_lakebase(w, infra, app_name)
+
+    # Step 6: Add app SP to Lakebase + grant database permissions
+    lb = infra.get("lakebase", {})
+    if lb.get("instance"):
+        _add_lakebase_role(w, lb["instance"], app_sp, "SERVICE_PRINCIPAL")
+    grant_lakebase_permissions(config, w)
+
+    # Step 7: Set LLM serving endpoint
     infra["serving_endpoint"] = serving_model
     print(f"  [serving] Using foundation model: {serving_model}")
 
-    # Step 6: Create Genie Space
+    # Step 8: Create Genie Space
     infra["genie_space_id"] = _create_genie_space(w, infra, app_name, config)
 
-    # Step 7: Create Databricks App (to get auto-created SP ID)
-    _create_app(w, infra, app_name, config)
+    # Step 9: Create agent SP with OAuth secret for Model Serving auth
+    # (Can't generate secrets for the app auto-SP — Databricks owns it.)
+    _create_agent_sp_secrets(w, infra, app_name)
 
-    # Step 8: Add app SP to Lakebase + grant database permissions
-    app_sp = infra.get("app_sp_client_id", "")
-    if app_sp:
-        lb = infra.get("lakebase", {})
-        if lb.get("instance"):
-            _add_lakebase_role(w, lb["instance"], app_sp, "SERVICE_PRINCIPAL")
+    # Step 10: Add agent SP to Lakebase + grant it Lakebase access
+    agent_sp = infra.get("agent_sp_client_id", "")
+    if agent_sp and lb.get("instance"):
+        _add_lakebase_role(w, lb["instance"], agent_sp, "SERVICE_PRINCIPAL")
     grant_lakebase_permissions(config, w)
 
     print()
@@ -242,7 +256,7 @@ def _create_vs_endpoint(w, infra: dict, app_name: str) -> str:
 # Step 4: Lakebase
 # ---------------------------------------------------------------------------
 
-def _create_lakebase(w, infra: dict, app_name: str, identity: dict) -> None:
+def _create_lakebase(w, infra: dict, app_name: str) -> None:
     """Create Lakebase instance and database."""
     lb = infra.setdefault("lakebase", {})
     instance_name = lb.get("instance", f"{app_name}-sessions")
@@ -284,10 +298,6 @@ def _create_lakebase(w, infra: dict, app_name: str, identity: dict) -> None:
 
     # Create database inside the instance
     _create_lakebase_database(w, lb, instance_name, db_name)
-
-    # Add identity as instance role
-    if identity["type"] == "service_principal" and identity["name"]:
-        _add_lakebase_role(w, instance_name, identity["name"], "SERVICE_PRINCIPAL")
 
 
 
@@ -450,63 +460,169 @@ def _create_app(w, infra: dict, app_name: str, config: dict) -> None:
         print(f"FAILED: {result.stderr[:200]}")
 
 
+def _create_agent_sp_secrets(w, infra: dict, app_name: str) -> None:
+    """Create an SP for Model Serving auth, generate OAuth secret, store in secret scope.
+
+    The app's auto-SP can't have secrets generated (owned by Databricks).
+    This creates a deployer-owned SP that agent endpoints authenticate as.
+    """
+    sp_name = f"{app_name}-agent-sp"
+    scope_name = infra.get("secret_scope", app_name)
+    infra["secret_scope"] = scope_name
+
+    # Check if already done
+    if infra.get("sp_secrets_stored"):
+        print(f"  [agent-sp] Using existing: {infra.get('agent_sp_client_id', '')[:20]}...")
+        return
+
+    print(f"  [agent-sp] Creating {sp_name}...", end=" ", flush=True)
+
+    # Find or create the SP
+    sp_id = None
+    app_id = None
+    try:
+        for sp in w.service_principals.list():
+            if sp.display_name == sp_name:
+                sp_id = sp.id
+                app_id = sp.application_id
+                print(f"exists ({app_id})", end=" ", flush=True)
+                break
+    except Exception:
+        pass
+
+    if not sp_id:
+        try:
+            sp = w.service_principals.create(display_name=sp_name)
+            sp_id = sp.id
+            app_id = sp.application_id
+            print(f"created ({app_id})", end=" ", flush=True)
+        except Exception as e:
+            print(f"FAILED: {e}")
+            return
+
+    infra["agent_sp_client_id"] = app_id
+
+    # Grant workspace-access entitlement (required for outbound API calls)
+    try:
+        from databricks.sdk.service.iam import PatchOp, Patch, PatchSchema
+        w.service_principals.patch(
+            id=str(sp_id),
+            operations=[Patch(op=PatchOp.ADD, path="entitlements", value=[{"value": "workspace-access"}])],
+            schemas=[PatchSchema.URN_IETF_PARAMS_SCIM_API_MESSAGES_2_0_PATCH_OP],
+        )
+        print("entitled", end=" ", flush=True)
+    except Exception as e:
+        logger.warning(f"Failed to set workspace-access entitlement: {e}")
+
+    # Generate OAuth secret
+    try:
+        secret_resp = w.service_principal_secrets_proxy.create(service_principal_id=sp_id)
+    except Exception as e:
+        print(f"secret failed: {e}")
+        return
+
+    # Create secret scope (idempotent)
+    try:
+        w.secrets.create_scope(scope=scope_name)
+        print("scope created", end=" ", flush=True)
+    except Exception as e:
+        if "already exists" in str(e).lower():
+            print("scope exists", end=" ", flush=True)
+        else:
+            print(f"scope failed: {e}")
+            return
+
+    # Store client_id + secret in scope
+    try:
+        w.secrets.put_secret(scope=scope_name, key="sp-client-id", string_value=app_id)
+        w.secrets.put_secret(scope=scope_name, key="sp-client-secret", string_value=secret_resp.secret)
+        infra["sp_secrets_stored"] = True
+        print("secrets stored")
+    except Exception as e:
+        print(f"put_secret failed: {e}")
+
+
 def _get_sp_list(config: dict) -> set[str]:
-    """Collect all SPs that need grants (grant_principal + app auto-SP)."""
+    """Return all SPs that need grants (app auto-SP + agent SP)."""
     infra = config.get("infrastructure", {})
-    identity = config.get("grant_principal", {})
     sp_list = set()
-    if identity.get("type") == "service_principal" and identity.get("name"):
-        sp_list.add(identity["name"])
-    app_sp = infra.get("app_sp_client_id", "")
-    if app_sp:
-        sp_list.add(app_sp)
+    for key in ["app_sp_client_id", "agent_sp_client_id"]:
+        sp = infra.get(key, "")
+        if sp:
+            sp_list.add(sp)
     return sp_list
 
 
 def grant_uc_permissions(config: dict, w) -> None:
-    """Grant UC catalog/schema permissions. Run before metadata audit."""
+    """Grant UC catalog/schema permissions to the app SP. Run before metadata audit."""
     infra = config.get("infrastructure", {})
     source_catalogs = config.get("source_catalogs", [])
     advisor_catalog = infra.get("advisor_catalog", "")
     warehouse_id = infra.get("warehouse_id", "")
-    identity = config.get("grant_principal", {})
-
-    print("  [permissions] Granting UC access...")
 
     sp_list = _get_sp_list(config)
-    if sp_list:
-        for sp_id in sp_list:
-            print(f"    Principal: {sp_id}")
-            for catalog in source_catalogs:
-                for stmt in [
-                    f"GRANT USE CATALOG ON CATALOG {catalog} TO `{sp_id}`",
-                    f"GRANT SELECT ON CATALOG {catalog} TO `{sp_id}`",
-                ]:
-                    try:
-                        _run_sql(w, warehouse_id, stmt)
-                        print(f"      {stmt}")
-                    except Exception:
-                        pass
+    if not sp_list:
+        print("  [permissions] No app SP found — skipping UC grants")
+        return
+
+    print("  [permissions] Granting UC access...")
+    for sp_id in sp_list:
+        print(f"    Principal: {sp_id}")
+        for catalog in source_catalogs:
+            for stmt in [
+                f"GRANT USE CATALOG ON CATALOG {catalog} TO `{sp_id}`",
+                f"GRANT SELECT ON CATALOG {catalog} TO `{sp_id}`",
+            ]:
                 try:
-                    for schema in w.schemas.list(catalog_name=catalog):
-                        if schema.name not in SYSTEM_SCHEMAS:
-                            stmt = f"GRANT USE SCHEMA ON SCHEMA {catalog}.{schema.name} TO `{sp_id}`"
-                            try:
-                                _run_sql(w, warehouse_id, stmt)
-                                print(f"      {stmt}")
-                            except Exception:
-                                pass
+                    _run_sql(w, warehouse_id, stmt)
+                    print(f"      {stmt}")
                 except Exception:
                     pass
-            stmt = f"GRANT ALL PRIVILEGES ON CATALOG {advisor_catalog} TO `{sp_id}`"
             try:
-                _run_sql(w, warehouse_id, stmt)
-                print(f"      {stmt}")
+                for schema in w.schemas.list(catalog_name=catalog):
+                    if schema.name not in SYSTEM_SCHEMAS:
+                        stmt = f"GRANT USE SCHEMA ON SCHEMA {catalog}.{schema.name} TO `{sp_id}`"
+                        try:
+                            _run_sql(w, warehouse_id, stmt)
+                            print(f"      {stmt}")
+                        except Exception:
+                            pass
             except Exception:
                 pass
-        print("    UC grants complete")
-    elif identity.get("type") == "user":
-        _print_user_grants(config, infra, identity["name"], source_catalogs, advisor_catalog)
+        stmt = f"GRANT ALL PRIVILEGES ON CATALOG {advisor_catalog} TO `{sp_id}`"
+        try:
+            _run_sql(w, warehouse_id, stmt)
+            print(f"      {stmt}")
+        except Exception:
+            pass
+    # Grant CAN_USE on SQL warehouse
+    if warehouse_id:
+        for sp_id in sp_list:
+            try:
+                w.api_client.do("PATCH", f"/api/2.0/permissions/sql/warehouses/{warehouse_id}", body={
+                    "access_control_list": [
+                        {"service_principal_name": sp_id, "permission_level": "CAN_USE"}
+                    ]
+                })
+                print(f"      CAN_USE on warehouse {warehouse_id} → {sp_id}")
+            except Exception:
+                pass
+
+    # Grant CAN_RUN on Genie Space
+    genie_space_id = infra.get("genie_space_id", "")
+    if genie_space_id:
+        for sp_id in sp_list:
+            try:
+                w.api_client.do("PATCH", f"/api/2.0/permissions/genie/{genie_space_id}", body={
+                    "access_control_list": [
+                        {"service_principal_name": sp_id, "permission_level": "CAN_RUN"}
+                    ]
+                })
+                print(f"      CAN_RUN on Genie space → {sp_id}")
+            except Exception:
+                pass
+
+    print("    UC grants complete")
 
 
 def grant_lakebase_permissions(config: dict, w) -> None:
@@ -533,57 +649,6 @@ def grant_lakebase_permissions(config: dict, w) -> None:
                 print(f"      {stmt}")
         except Exception as e:
             logger.warning(f"Lakebase grants failed for {sp_id[:20]}: {e}")
-
-
-def _print_user_grants(config, infra, user_name, source_catalogs, advisor_catalog):
-    """Print required grants for a user identity."""
-    ep_name = infra.get("serving_endpoint", "")
-    vs_name = infra.get("vs_endpoint", "")
-    lb = infra.get("lakebase", {})
-
-    lines = [
-        f"=== Required grants for grant_principal user: {user_name} ===",
-        "",
-        "Unity Catalog (run as metastore admin or catalog owner):",
-    ]
-
-    for catalog in source_catalogs:
-        lines.append(f"  GRANT USE CATALOG ON CATALOG {catalog} TO `{user_name}`;")
-        lines.append(f"  GRANT SELECT ON CATALOG {catalog} TO `{user_name}`;")
-        lines.append(f"  -- Grant USE SCHEMA on each schema in {catalog} as needed")
-
-    lines.append(f"  GRANT ALL PRIVILEGES ON CATALOG {advisor_catalog} TO `{user_name}`;")
-    lines.append("")
-
-    if ep_name:
-        lines.append("Serving endpoint:")
-        lines.append(f'  Grant CAN_QUERY on endpoint "{ep_name}" via workspace UI or API')
-        lines.append("")
-
-    if vs_name:
-        lines.append("Vector Search:")
-        lines.append(f'  Grant CAN_USE on endpoint "{vs_name}" via workspace UI or API')
-        lines.append("")
-
-    if lb.get("instance"):
-        lines.append("Lakebase:")
-        lines.append(f'  Add user as instance role on "{lb["instance"]}"')
-        lines.append(f'  GRANT ALL ON DATABASE {lb.get("database", "")} TO "{user_name}";')
-        lines.append(f'  GRANT ALL ON SCHEMA public TO "{user_name}";')
-        lines.append(f'  GRANT ALL ON ALL TABLES IN SCHEMA public TO "{user_name}";')
-
-    grant_text = "\n".join(lines)
-    print()
-    print(grant_text)
-    print()
-
-    # Write to file
-    output_dir = Path(config.get("_config_path", "config/advisor_config.yaml")).parent / ".generated"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    grant_file = output_dir / "required_grants.sql"
-    with open(grant_file, "w") as f:
-        f.write(grant_text + "\n")
-    print(f"  Grants saved to {grant_file}")
 
 
 # ---------------------------------------------------------------------------

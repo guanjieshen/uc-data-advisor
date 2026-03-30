@@ -33,8 +33,11 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     print("=" * 60)
 
     workspace_host = config.get("workspace", {}).get("host", "")
+    scope = infra.get("secret_scope", app_name)
     env_vars = {
         "DATABRICKS_HOST": workspace_host,
+        "DATABRICKS_CLIENT_ID": "{{secrets/" + scope + "/sp-client-id}}",
+        "DATABRICKS_CLIENT_SECRET": "{{secrets/" + scope + "/sp-client-secret}}",
         "SERVING_ENDPOINT": infra.get("serving_endpoint", ""),
         "GENIE_SPACE_ID": infra.get("genie_space_id", ""),
         "VS_INDEX_METADATA": infra.get("vs_index_metadata", ""),
@@ -63,6 +66,8 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
             tags={"app": app_name, "agent": agent_name},
         )
 
+        # Wait for endpoint to be READY before patching config
+        _wait_for_endpoint_ready(w, ep_name)
         _configure_ai_gateway(w, ep_name, config)
         _patch_endpoint_env_vars(w, ep_name, env_vars)
 
@@ -151,6 +156,8 @@ def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):
                 "entity_name": entity.entity_name,
                 "entity_version": entity.entity_version,
                 "environment_vars": existing_vars,
+                "workload_size": "Small",
+                "scale_to_zero_enabled": True,
             })
         if entities:
             w.api_client.do("PUT", f"/api/2.0/serving-endpoints/{ep_name}/config", body={

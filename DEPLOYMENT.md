@@ -43,9 +43,6 @@ workspace:
 # workspace:
 #   host: "https://my-workspace.cloud.databricks.com"
 
-grant_principal:
-  type: service_principal
-  name: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # SP client ID
 ```
 
 ```bash
@@ -107,39 +104,17 @@ Metric views are only generated when `enable_metric_views: true` is set in the c
 6. Generates `app.yaml` from infrastructure config
 7. Uploads app files to workspace + deploys Databricks App
 
-## Grant Principal
+## Permissions
 
-### Service Principal (recommended)
+The Databricks App auto-creates a service principal on first deploy. The setup pipeline uses this SP as the sole grant recipient — no manual SP configuration needed.
 
-The setup script auto-grants all permissions to both the configured SP and the app's auto-created SP — zero manual steps.
-
-```yaml
-grant_principal:
-  type: service_principal
-  name: "03e2f707-ee86-4ed4-adea-28a6e792c82f"
-```
-
-Permissions auto-granted:
+Permissions auto-granted to the app SP:
 - `USE CATALOG` + `SELECT` on each source catalog (+ `USE SCHEMA` per schema)
 - `ALL PRIVILEGES` on advisor catalog
-- `CAN_QUERY` on serving endpoint
+- `CAN_QUERY` on agent serving endpoints
 - Lakebase instance role + database grants
 
-### User
-
-The setup script cannot grant UC permissions to users (requires metastore admin), so it prints a SQL script of required grants and saves it to `config/.generated/required_grants.sql`.
-
-```yaml
-grant_principal:
-  type: user
-  name: "alice@company.com"
-```
-
-After running setup, apply the grants:
-```bash
-cat config/.generated/required_grants.sql
-# Copy and run in a SQL editor as a metastore admin
-```
+An OAuth secret is generated for the app SP and stored in a Databricks secret scope. Agent Model Serving endpoints reference these secrets for outbound API authentication.
 
 ## Running Individual Stages
 
