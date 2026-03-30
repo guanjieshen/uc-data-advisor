@@ -221,6 +221,46 @@ infrastructure: {}
 generated: {}
 ```
 
+## Benchmarks
+
+The benchmark suite runs 8 questions across all 4 agent types (discovery, metrics, QA, general) and validates routing accuracy and response quality.
+
+### Option 1: Pipeline verify step (local or Databricks terminal)
+
+```bash
+uv run python -m src.setup.run --config config/my_config.yaml --step verify
+```
+
+This is included automatically at the end of `--step all`. It resolves the app URL from the config and authenticates using the pipeline's workspace client.
+
+### Option 2: Databricks notebook (recommended for workspace environments)
+
+Upload `tests/benchmark_notebook.py` to your workspace and run it on any cluster. It uses the notebook's built-in auth — no CLI or profile configuration needed.
+
+1. Import the notebook: **Workspace > Import > File > `tests/benchmark_notebook.py`**
+2. Set the `app_url` widget (or leave blank to auto-resolve from config)
+3. Set the `config_path` widget to your uploaded config file path
+4. **Run All**
+
+Results are displayed as an interactive DataFrame table.
+
+### Option 3: Standalone script (local)
+
+```bash
+APP_URL="https://your-app.aws.databricksapps.com" \
+  uv run python tests/benchmark.py
+```
+
+Authenticates via `databricks auth token` CLI or SDK auto-detection. Set `DATABRICKS_PROFILE` or `DATABRICKS_TOKEN` if needed.
+
+### Benchmark criteria
+
+| Status | Meaning |
+|--------|---------|
+| **PASS** | Correct routing, response has content, no errors |
+| **WARN** | Correct routing but response contains error/unavailable messages, or routing mismatch |
+| **FAIL** | HTTP error, timeout (300s), or empty response |
+
 ## Updating After Deployment
 
 Re-run specific steps to update:
