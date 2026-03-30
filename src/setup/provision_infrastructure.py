@@ -622,6 +622,19 @@ def grant_uc_permissions(config: dict, w) -> None:
             except Exception:
                 pass
 
+    # Grant CAN_USE on Databricks App to all workspace users
+    app_name = infra.get("app_name", "")
+    if app_name:
+        try:
+            w.api_client.do("PATCH", f"/api/2.0/permissions/apps/{app_name}", body={
+                "access_control_list": [
+                    {"group_name": "users", "permission_level": "CAN_USE"}
+                ]
+            })
+            print(f"      CAN_USE on app '{app_name}' → all users")
+        except Exception:
+            pass
+
     print("    UC grants complete")
 
 
