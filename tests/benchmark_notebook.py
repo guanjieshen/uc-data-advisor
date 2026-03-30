@@ -70,12 +70,20 @@ GENERAL_PROMPT = generated.get("prompts", {}).get("general",
 
 
 def _llm_chat(messages: list[dict], max_tokens: int = 512, temperature: float = 0) -> str:
-    """Call the LLM serving endpoint via raw API."""
-    resp = w.api_client.do(
-        "POST",
-        f"/serving-endpoints/{serving_endpoint}/invocations",
-        body={"messages": messages, "max_tokens": max_tokens, "temperature": temperature},
-    )
+    """Call the LLM serving endpoint via raw API. Handles input guardrail triggers."""
+    try:
+        resp = w.api_client.do(
+            "POST",
+            f"/serving-endpoints/{serving_endpoint}/invocations",
+            body={"messages": messages, "max_tokens": max_tokens, "temperature": temperature},
+        )
+    except Exception as e:
+        if "guardrail_triggered" in str(e):
+            return ""
+        raise
+    # Check for guardrail in response body
+    if resp.get("finishReason") == "input_guardrail_triggered" or resp.get("input_guardrail"):
+        return ""
     return (resp.get("choices", [{}])[0].get("message", {}).get("content", "") or "").strip()
 
 
@@ -86,6 +94,7 @@ def classify_intent(question: str) -> str:
         max_tokens=16,
     ).lower()
     if intent not in ("discovery", "metrics", "qa", "general"):
+        # Guardrail triggered or unrecognized — default to discovery
         intent = "discovery"
     return intent
 
