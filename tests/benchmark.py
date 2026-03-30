@@ -42,27 +42,50 @@ PROFILE = os.environ.get("DATABRICKS_PROFILE", _workspace.get("profile", ""))
 
 def get_token():
     host = _workspace.get("host", "") or os.environ.get("DATABRICKS_HOST", "")
-    # Try CLI first (works locally)
+    token = _workspace.get("token", "") or os.environ.get("DATABRICKS_TOKEN", "")
+
+    # 1. Explicit token from config or env
+    if token:
+        return token
+
+    # 2. CLI with profile
+    if PROFILE:
+        try:
+            result = subprocess.run(
+                ["databricks", "auth", "token", "-p", PROFILE, "-o", "json"],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return json.loads(result.stdout)["access_token"]
+        except Exception:
+            pass
+
+    # 3. CLI with host
+    if host:
+        try:
+            result = subprocess.run(
+                ["databricks", "auth", "token", "--host", host, "-o", "json"],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return json.loads(result.stdout)["access_token"]
+        except Exception:
+            pass
+
+    # 4. SDK auth (auto-detects on Databricks clusters/notebooks)
+    from databricks.sdk import WorkspaceClient
     try:
-        cmd = ["databricks", "auth", "token", "-o", "json"]
-        if PROFILE:
-            cmd += ["-p", PROFILE]
-        elif host:
-            cmd += ["--host", host]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0 and result.stdout.strip():
-            return json.loads(result.stdout)["access_token"]
+        w = WorkspaceClient()
+        headers = w.config.authenticate()
+        if headers and "Authorization" in headers:
+            return headers["Authorization"].replace("Bearer ", "")
     except Exception:
         pass
-    # Fall back to SDK auth (works on Databricks workspace/cluster)
-    from databricks.sdk import WorkspaceClient
-    kwargs = {}
-    if host:
-        kwargs["host"] = host
-    if PROFILE:
-        kwargs["profile"] = PROFILE
-    w = WorkspaceClient(**kwargs)
-    return w.config.authenticate()["Authorization"].replace("Bearer ", "")
+
+    raise RuntimeError(
+        "Could not obtain auth token. Set workspace.profile or workspace.token in config, "
+        "or run from an authenticated Databricks environment."
+    )
 
 
 # Load benchmarks from config or use defaults
