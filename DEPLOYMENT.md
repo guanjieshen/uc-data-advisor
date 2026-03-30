@@ -40,14 +40,14 @@ workspace:
 uv run python -m src.setup.run --config config/my_config.yaml
 
 # Pipeline runs: provision → grant-uc → audit → generate → register →
-#   deploy-agents → grant-agent-permissions → deploy → verify
+#   deploy-agents → grant-agent-permissions → deploy
 ```
 
-The pipeline ends with an automated benchmark verification (8 questions across all 4 agent types). The app URL is printed at the end.
+The app URL is printed at the end. Run benchmarks separately (see [Benchmarks](#benchmarks) section).
 
 ## What the Setup Pipeline Does
 
-The pipeline runs 9 steps in sequence:
+The pipeline runs 8 steps in sequence (verify and teardown are run separately):
 
 ### Step 1: Provision Infrastructure
 
@@ -111,13 +111,6 @@ Waits for all agent endpoints to be READY, then grants `CAN_QUERY` to the app SP
 3. Updates Genie Space table list
 4. Generates `app.yaml` and deploys the Databricks App
 
-### Step 9: Verify
-
-Runs 8 benchmark questions against the live app:
-- 2 discovery, 2 metrics, 3 QA, 1 general
-- Validates routing accuracy and response quality
-- Flags errors/unavailable responses as WARN
-
 ## Permissions
 
 No manual permission configuration is needed. The pipeline auto-manages two service principals:
@@ -169,6 +162,10 @@ serving_model: databricks-claude-opus-4-6  # Foundation model for LLM calls
 embedding_model: databricks-bge-large-en   # VS embedding model
 enable_metric_views: false             # Generate metric views and materialized tables
 enable_ai_gateway_guardrails: false    # Enable input safety guardrails on agent endpoints
+rate_limits:                           # AI Gateway rate limits on agent endpoints (optional)
+  - calls: 120
+    key: user                          # "user" (per-user) or "endpoint" (shared)
+    renewal_period: minute             # "minute" or "day"
 include_schemas: []                    # Restrict to specific schemas
 exclude_schemas: [staging, temp]       # Skip these schemas
 ```
@@ -225,24 +222,23 @@ generated: {}
 
 The benchmark suite runs 8 questions across all 4 agent types (discovery, metrics, QA, general) and validates routing accuracy and response quality.
 
-### Option 1: Pipeline verify step (local or Databricks terminal)
+### Option 1: Databricks notebook (recommended)
+
+Upload `tests/benchmark_notebook.py` to your workspace and run it on any cluster. Calls agent serving endpoints directly via the Databricks SDK — no app URL or external auth needed.
+
+1. Import the notebook: **Workspace > Import > File > `tests/benchmark_notebook.py`**
+2. Set the `config_path` widget to your uploaded config file path
+3. **Run All**
+
+Results are displayed as an interactive DataFrame table.
+
+### Option 2: Pipeline verify step (local)
 
 ```bash
 uv run python -m src.setup.run --config config/my_config.yaml --step verify
 ```
 
-This is included automatically at the end of `--step all`. It resolves the app URL from the config and authenticates using the pipeline's workspace client.
-
-### Option 2: Databricks notebook (recommended for workspace environments)
-
-Upload `tests/benchmark_notebook.py` to your workspace and run it on any cluster. It uses the notebook's built-in auth — no CLI or profile configuration needed.
-
-1. Import the notebook: **Workspace > Import > File > `tests/benchmark_notebook.py`**
-2. Set the `app_url` widget (or leave blank to auto-resolve from config)
-3. Set the `config_path` widget to your uploaded config file path
-4. **Run All**
-
-Results are displayed as an interactive DataFrame table.
+Calls the deployed app's HTTP API. Authenticates using the pipeline's workspace client.
 
 ### Option 3: Standalone script (local)
 
@@ -251,7 +247,7 @@ APP_URL="https://your-app.aws.databricksapps.com" \
   uv run python tests/benchmark.py
 ```
 
-Authenticates via `databricks auth token` CLI or SDK auto-detection. Set `DATABRICKS_PROFILE` or `DATABRICKS_TOKEN` if needed.
+Authenticates via `databricks auth token` CLI or SDK. Set `DATABRICKS_PROFILE` or `DATABRICKS_TOKEN` if needed.
 
 ### Benchmark criteria
 
