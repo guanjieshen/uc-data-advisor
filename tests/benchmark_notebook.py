@@ -2,64 +2,44 @@
 # MAGIC %md
 # MAGIC # UC Data Advisor — Benchmark Suite
 # MAGIC
-# MAGIC Run this notebook directly in a Databricks workspace to benchmark the deployed UC Data Advisor app.
+# MAGIC Runs benchmarks directly against agent serving endpoints via the Databricks SDK.
+# MAGIC No app URL or external auth needed — uses the notebook's built-in credentials.
 # MAGIC
-# MAGIC **Setup:** Set the two widgets below (`app_url` and `config_path`), then Run All.
+# MAGIC **Setup:** Set the `config_path` widget to your deployed config file, then Run All.
 
 # COMMAND ----------
 
-dbutils.widgets.text("app_url", "", "App URL")
 dbutils.widgets.text("config_path", "/Workspace/Users/allan.cao@databricks.com/uc-data-advisor/config/advisor_config.yaml", "Config Path")
-
-APP_URL = dbutils.widgets.get("app_url").strip().rstrip("/")
 CONFIG_PATH = dbutils.widgets.get("config_path").strip()
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Load Config & Auth
+# MAGIC ## Load Config
 
 # COMMAND ----------
 
-import json, time, yaml, requests
+import json, time, yaml
 from databricks.sdk import WorkspaceClient
 
-# Auth — use dbutils API token (works for external app URLs)
-try:
-    token = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
-except Exception:
-    # Fall back to SDK auth
-    w = WorkspaceClient()
-    token = w.config.authenticate()["Authorization"].replace("Bearer ", "")
-
 w = WorkspaceClient()
-headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-# Resolve app URL from config if not provided
-if not APP_URL:
-    with open(CONFIG_PATH) as f:
-        _config = yaml.safe_load(f) or {}
-    app_name = _config.get("infrastructure", {}).get("app_name", "")
-    if app_name:
-        try:
-            app_info = w.apps.get(app_name)
-            APP_URL = app_info.url.rstrip("/") if app_info.url else ""
-        except Exception:
-            pass
+with open(CONFIG_PATH) as f:
+    config = yaml.safe_load(f) or {}
 
-if not APP_URL:
-    raise ValueError("Set app_url widget or ensure config has infrastructure.app_name")
+infra = config.get("infrastructure", {})
+generated = config.get("generated", {})
+app_name = infra.get("app_name", "")
+agent_endpoints = infra.get("agent_endpoints", {})
+serving_endpoint = infra.get("serving_endpoint", "databricks-claude-opus-4-6")
 
-print(f"App URL: {APP_URL}")
+assert agent_endpoints, "No agent_endpoints in config — run the setup pipeline first"
 
-# Load benchmarks from config
-try:
-    with open(CONFIG_PATH) as f:
-        _config = yaml.safe_load(f) or {}
-except FileNotFoundError:
-    _config = {}
+print(f"App name: {app_name}")
+print(f"LLM endpoint: {serving_endpoint}")
+print(f"Agent endpoints: {json.dumps(agent_endpoints, indent=2)}")
 
-BENCHMARKS = _config.get("generated", {}).get("benchmarks", [
+BENCHMARKS = generated.get("benchmarks", [
     {"question": "What catalogs are available in the workspace?", "expected_agent": "discovery", "expect_contains": ["catalog"], "category": "discovery"},
     {"question": "Show me the columns in the media_gold_reviews_chunked table", "expected_agent": "discovery", "expect_contains": [], "category": "discovery"},
     {"question": "What is the average franchiseID across all records?", "expected_agent": "metrics", "expect_contains": [], "category": "metrics"},
@@ -73,15 +53,84 @@ print(f"Benchmarks: {len(BENCHMARKS)} questions")
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Helpers: Classify & Call Agents
+
+# COMMAND ----------
+
+CLASSIFY_PROMPT = generated.get("prompts", {}).get("classify", """You are an intent classifier for the UC Data Advisor.
+Classify the user's latest message into exactly one category:
+- discovery: Questions about finding datasets, browsing catalogs/schemas/tables, understanding table structures, or checking what data exists.
+- metrics: Questions asking for specific numbers, aggregations, counts, trends, or analytical queries about the data.
+- qa: Questions about data governance, access policies, how to request data, FAQs about the data catalog, or general knowledge questions.
+- general: Greetings, small talk, clarifications, or anything that doesn't fit the above categories.
+Respond with ONLY the category name, nothing else.""")
+
+GENERAL_PROMPT = generated.get("prompts", {}).get("general",
+    "You are the UC Data Advisor, a helpful assistant for discovering and understanding datasets in Unity Catalog. Respond warmly and briefly.")
+
+
+def classify_intent(question: str) -> str:
+    """Classify a question into an agent category via the LLM endpoint."""
+    resp = w.serving_endpoints.query(
+        name=serving_endpoint,
+        messages=[
+            {"role": "system", "content": CLASSIFY_PROMPT},
+            {"role": "user", "content": question},
+        ],
+        max_tokens=16,
+        temperature=0,
+    )
+    intent = (resp.choices[0].message.content or "").strip().lower()
+    if intent not in ("discovery", "metrics", "qa", "general"):
+        intent = "discovery"
+    return intent
+
+
+def call_agent(endpoint_name: str, question: str) -> str:
+    """Call an agent serving endpoint and extract the text response."""
+    payload = {"input": [{"role": "user", "content": question}]}
+    resp = w.api_client.do(
+        "POST",
+        f"/serving-endpoints/{endpoint_name}/invocations",
+        body=payload,
+    )
+    # Extract text from ResponsesAgent output format
+    for item in resp.get("output", []):
+        if item.get("type") == "message":
+            for content in item.get("content", []):
+                if content.get("type") == "output_text":
+                    return content.get("text", "")
+    return str(resp.get("output", ""))
+
+
+def general_response(question: str) -> str:
+    """Handle general/greeting messages without tools."""
+    resp = w.serving_endpoints.query(
+        name=serving_endpoint,
+        messages=[
+            {"role": "system", "content": GENERAL_PROMPT},
+            {"role": "user", "content": question},
+        ],
+        max_tokens=512,
+        temperature=0.5,
+    )
+    return resp.choices[0].message.content or ""
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Health Check
 
 # COMMAND ----------
 
-CHAT_ENDPOINT = f"{APP_URL}/api/chat"
+# Verify all agent endpoints are READY
+for name, ep_name in agent_endpoints.items():
+    ep = w.serving_endpoints.get(ep_name)
+    state = ep.state
+    print(f"  {ep_name}: ready={state.ready}, config_update={state.config_update}")
+    assert "READY" in str(state.ready), f"Endpoint {ep_name} not ready: {state.ready}"
 
-health = requests.get(f"{APP_URL}/api/health", headers=headers, timeout=10)
-print(f"Health: {health.status_code} — {health.text[:200]}")
-assert health.status_code == 200, f"Health check failed: {health.status_code}"
+print("\nAll agent endpoints READY")
 
 # COMMAND ----------
 
@@ -102,22 +151,20 @@ for i, bench in enumerate(BENCHMARKS, 1):
 
     print(f"\n[{i}/{len(BENCHMARKS)}] ({category.upper()}) {question}")
 
-    payload = {"messages": [{"role": "user", "content": question}]}
     start = time.time()
-
     try:
-        resp = requests.post(CHAT_ENDPOINT, json=payload, headers=headers, timeout=300)
+        # Classify intent
+        actual_agent = classify_intent(question)
+
+        # Route to agent or handle general
+        if actual_agent in agent_endpoints:
+            response_text = call_agent(agent_endpoints[actual_agent], question)
+        else:
+            response_text = general_response(question)
+            actual_agent = "general"
+
         elapsed = time.time() - start
 
-        if resp.status_code != 200:
-            print(f"  FAIL (HTTP {resp.status_code})")
-            results.append({**bench, "status": "FAIL", "elapsed": elapsed,
-                            "actual_agent": "", "response": resp.text[:200]})
-            continue
-
-        data = resp.json()
-        response_text = data.get("response", "")
-        actual_agent = data.get("agent", "unknown")
         routing_ok = actual_agent == expected
         contains_ok = all(kw.lower() in response_text.lower() for kw in bench.get("expect_contains", []))
         has_content = len(response_text.strip()) > 10
@@ -132,28 +179,23 @@ for i, bench in enumerate(BENCHMARKS, 1):
         else:
             status = "PASS"
 
-        icon = {"PASS": "✅", "WARN": "⚠️", "FAIL": "❌"}[status]
+        icon = {"PASS": "\u2705", "WARN": "\u26a0\ufe0f", "FAIL": "\u274c"}[status]
         print(f"  {icon} {status} | Agent: {actual_agent} (expected {expected}) | {elapsed:.1f}s")
         print(f"  {response_text[:200]}")
         if not routing_ok:
-            print(f"  ⚠️ ROUTING MISMATCH: got {actual_agent}")
+            print(f"  \u26a0\ufe0f ROUTING MISMATCH: got {actual_agent}")
         if has_error:
-            print(f"  ⚠️ RESPONSE ERROR detected")
+            print(f"  \u26a0\ufe0f RESPONSE ERROR detected")
 
         results.append({**bench, "status": status, "elapsed": elapsed,
                         "actual_agent": actual_agent, "response": response_text,
                         "routing_ok": routing_ok, "contains_ok": contains_ok})
 
-    except requests.Timeout:
-        elapsed = time.time() - start
-        print(f"  ❌ FAIL (timeout after {elapsed:.1f}s)")
-        results.append({**bench, "status": "FAIL", "elapsed": elapsed,
-                        "actual_agent": "", "response": ""})
     except Exception as e:
         elapsed = time.time() - start
-        print(f"  ❌ FAIL ({e})")
+        print(f"  \u274c FAIL ({e})")
         results.append({**bench, "status": "FAIL", "elapsed": elapsed,
-                        "actual_agent": "", "response": ""})
+                        "actual_agent": "", "response": str(e)})
 
 # COMMAND ----------
 
