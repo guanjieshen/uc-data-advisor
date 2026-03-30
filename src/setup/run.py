@@ -74,7 +74,7 @@ def main():
     }
 
     if args.step == "all":
-        for step_name in ["provision", "grant-uc", "audit", "generate", "register", "deploy-agents", "grant-agent-permissions", "deploy", "verify"]:
+        for step_name in ["provision", "grant-uc", "audit", "generate", "register", "deploy-agents", "grant-agent-permissions", "deploy"]:
             steps[step_name](config, w)
             save_config(config, args.config)
     else:
