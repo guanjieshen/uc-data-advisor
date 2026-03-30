@@ -9,7 +9,7 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("config_path", "/Workspace/Users/allan.cao@databricks.com/uc-data-advisor/config/advisor_config.yaml", "Config Path")
+dbutils.widgets.text("config_path", "/Workspace/Users/<your_user>/uc-data-advisor/config/<my_config>_config.yaml", "Config Path")
 CONFIG_PATH = dbutils.widgets.get("config_path").strip()
 
 # COMMAND ----------
