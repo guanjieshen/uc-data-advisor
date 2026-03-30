@@ -41,11 +41,14 @@ PROFILE = os.environ.get("DATABRICKS_PROFILE", _workspace.get("profile", ""))
 
 
 def get_token():
+    host = _workspace.get("host", "") or os.environ.get("DATABRICKS_HOST", "")
     # Try CLI first (works locally)
     try:
         cmd = ["databricks", "auth", "token", "-o", "json"]
         if PROFILE:
             cmd += ["-p", PROFILE]
+        elif host:
+            cmd += ["--host", host]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0 and result.stdout.strip():
             return json.loads(result.stdout)["access_token"]
@@ -53,7 +56,12 @@ def get_token():
         pass
     # Fall back to SDK auth (works on Databricks workspace/cluster)
     from databricks.sdk import WorkspaceClient
-    w = WorkspaceClient()
+    kwargs = {}
+    if host:
+        kwargs["host"] = host
+    if PROFILE:
+        kwargs["profile"] = PROFILE
+    w = WorkspaceClient(**kwargs)
     return w.config.authenticate()["Authorization"].replace("Bearer ", "")
 
 
