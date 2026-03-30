@@ -234,13 +234,19 @@ def _step_verify(config, w):
         else:
             print(f"\r  Agent endpoints not ready after {int(time.time() - start)}s, running benchmarks anyway{' ' * 10}")
 
-    # Run benchmarks
+    # Run benchmarks — pass the token from our already-authenticated client
     config_path = os.path.abspath(config.get("_config_path", "config/advisor_config.yaml"))
+    try:
+        auth_token = w.config.authenticate().get("Authorization", "").replace("Bearer ", "")
+    except Exception:
+        auth_token = ""
     env = {
         **os.environ,
         "APP_URL": app_url,
         "ADVISOR_CONFIG_PATH": config_path,
     }
+    if auth_token:
+        env["DATABRICKS_TOKEN"] = auth_token
     if profile:
         env["DATABRICKS_PROFILE"] = profile
 
