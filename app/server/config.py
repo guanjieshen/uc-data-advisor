@@ -14,24 +14,29 @@ IS_MODEL_SERVING = bool(os.environ.get("DATABRICKS_SERVING_ENDPOINT"))
 
 def get_workspace_client() -> WorkspaceClient:
     """Get WorkspaceClient with automatic credential detection."""
+    # 1. Databricks App — always use auto-injected credentials
+    if IS_DATABRICKS_APP:
+        return WorkspaceClient()
+
+    # 2. Model Serving — use explicit SP credentials from secret scope
     host = os.environ.get("DATABRICKS_HOST", "")
-    token = os.environ.get("DATABRICKS_TOKEN", "")
     client_id = os.environ.get("DATABRICKS_CLIENT_ID", "")
     client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET", "")
-
-    # 1. OAuth M2M with explicit SP credentials (Model Serving with secret scope)
-    if host and client_id and client_secret:
+    if IS_MODEL_SERVING and host and client_id and client_secret:
         return WorkspaceClient(host=host, client_id=client_id, client_secret=client_secret)
-
-    # 2. Databricks App or Model Serving — auto-injected credentials
-    if IS_DATABRICKS_APP or IS_MODEL_SERVING:
+    if IS_MODEL_SERVING:
         return WorkspaceClient()
 
     # 3. Explicit host + token from env
+    token = os.environ.get("DATABRICKS_TOKEN", "")
     if host and token:
         return WorkspaceClient(host=host, token=token)
 
-    # 4. Default SDK auth (CLI profile, env vars, etc.)
+    # 4. OAuth M2M with SPN credentials (local dev)
+    if host and client_id and client_secret:
+        return WorkspaceClient(host=host, client_id=client_id, client_secret=client_secret)
+
+    # 5. Default SDK auth (CLI profile, env vars, etc.)
     return WorkspaceClient()
 
 
