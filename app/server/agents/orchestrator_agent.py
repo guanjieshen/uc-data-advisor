@@ -75,15 +75,28 @@ class OrchestratorAgent(ResponsesAgent):
             if ep:
                 agent_endpoints[agent] = ep
 
-        # Convert input to plain dicts
+        # Convert input to plain JSON-serializable dicts
         messages = []
         for item in request.input:
             if isinstance(item, dict):
                 messages.append(item)
-            elif hasattr(item, "to_dict"):
-                messages.append(item.to_dict())
             else:
-                messages.append({"role": getattr(item, "role", "user"), "content": getattr(item, "content", str(item))})
+                role = getattr(item, "role", "user")
+                content = getattr(item, "content", "")
+                # Assistant messages may have content as a list of objects
+                if isinstance(content, list):
+                    text_parts = []
+                    for part in content:
+                        if isinstance(part, dict):
+                            text_parts.append(part.get("text", ""))
+                        elif hasattr(part, "text"):
+                            text_parts.append(part.text)
+                        else:
+                            text_parts.append(str(part))
+                    content = "\n".join(text_parts)
+                elif not isinstance(content, str):
+                    content = str(content)
+                messages.append({"role": role, "content": content})
 
         # Classify intent
         intent = self._classify(client, model, messages)
