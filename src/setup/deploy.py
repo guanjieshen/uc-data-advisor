@@ -356,6 +356,7 @@ env:
     # Upload the specific config file as config/advisor_config.yaml
     # (matches the ADVISOR_CONFIG_PATH env var in app.yaml)
     config_src = os.path.abspath(config.get("_config_path", "config/advisor_config.yaml"))
+    _cli(["workspace", "mkdirs", f"{workspace_path}/config"], "config dir")
     _cli(["workspace", "import", f"{workspace_path}/config/advisor_config.yaml", "--file", config_src, "--format", "AUTO", "--overwrite"], "config upload")
 
     # Step 3: Deploy the app
