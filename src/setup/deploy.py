@@ -296,6 +296,8 @@ env:
     value: "{infra.get('app_sp_client_id', '')}"
   - name: LAKEBASE_INSTANCE
     value: "{lb.get('instance', '')}"
+  - name: ORCHESTRATOR_ENDPOINT
+    value: "{infra.get('agent_endpoints', {}).get('orchestrator', '')}"
   - name: ADVISOR_CONFIG_PATH
     value: "config/advisor_config.yaml"
 """
