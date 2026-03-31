@@ -142,8 +142,8 @@ class OrchestratorAgent(ResponsesAgent):
                 body=payload,
             )
         except Exception as e:
-            logger.error(f"Agent endpoint {endpoint_name} call failed: {e}")
-            return f"I encountered an error routing to the {endpoint_name} agent. Please try again."
+            logger.error(f"Agent endpoint {endpoint_name} call failed: {e}", exc_info=True)
+            raise
 
         # Extract text from ResponsesAgent output
         for item in resp.get("output", []):
