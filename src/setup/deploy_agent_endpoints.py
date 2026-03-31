@@ -235,21 +235,27 @@ def _wait_for_endpoint_ready(w, ep_name: str, timeout: int = 600):
 
 
 def _grant_endpoint_permissions(w, infra, config, endpoints, app_sp):
-    """Grant app SP CAN_QUERY on each agent endpoint via SDK."""
+    """Grant app SP and agent SP CAN_QUERY on each agent endpoint via SDK."""
     from databricks.sdk.service.serving import ServingEndpointAccessControlRequest, ServingEndpointPermissionLevel
+
+    agent_sp = infra.get("agent_sp_client_id", "")
+    sp_list = [sp for sp in [app_sp, agent_sp] if sp]
 
     for agent_name, ep_name in endpoints.items():
         try:
             ep = w.serving_endpoints.get(ep_name)
+            acl = [
+                ServingEndpointAccessControlRequest(
+                    service_principal_name=sp,
+                    permission_level=ServingEndpointPermissionLevel.CAN_QUERY,
+                )
+                for sp in sp_list
+            ]
             w.serving_endpoints.update_permissions(
                 serving_endpoint_id=ep.id,
-                access_control_list=[
-                    ServingEndpointAccessControlRequest(
-                        service_principal_name=app_sp,
-                        permission_level=ServingEndpointPermissionLevel.CAN_QUERY,
-                    ),
-                ],
+                access_control_list=acl,
             )
-            print(f"    CAN_QUERY on endpoint '{ep_name}' → SP {app_sp}")
+            for sp in sp_list:
+                print(f"    CAN_QUERY on endpoint '{ep_name}' → SP {sp}")
         except Exception as e:
-            logger.warning(f"Failed to grant app SP on {ep_name}: {e}")
+            logger.warning(f"Failed to grant permissions on {ep_name}: {e}")

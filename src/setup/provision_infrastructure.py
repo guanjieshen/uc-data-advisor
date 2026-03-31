@@ -194,7 +194,11 @@ def _create_catalog_and_schema(w, infra: dict, config: dict = None) -> None:
 
     try:
         if storage_location:
-            _run_sql(w, warehouse_id, f"CREATE CATALOG IF NOT EXISTS {catalog} MANAGED LOCATION '{storage_location}'")
+            try:
+                _run_sql(w, warehouse_id, f"CREATE CATALOG IF NOT EXISTS {catalog} MANAGED LOCATION '{storage_location}'")
+            except Exception:
+                # Fall back to default storage if MANAGED LOCATION is not supported
+                _run_sql(w, warehouse_id, f"CREATE CATALOG IF NOT EXISTS {catalog}")
         else:
             _run_sql(w, warehouse_id, f"CREATE CATALOG IF NOT EXISTS {catalog}")
         print("created")
