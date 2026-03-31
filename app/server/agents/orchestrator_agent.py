@@ -8,11 +8,16 @@ without going through the Databricks App.
 import os
 import json
 import logging
+from typing import Generator
 from uuid import uuid4
 
 from openai import OpenAI, BadRequestError
 from mlflow.pyfunc import ResponsesAgent
-from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse
+from mlflow.types.responses import (
+    ResponsesAgentRequest,
+    ResponsesAgentResponse,
+    ResponsesAgentStreamEvent,
+)
 
 from ..config import get_workspace_client, get_workspace_host, get_oauth_token
 
@@ -51,6 +56,13 @@ def _get_llm_client() -> OpenAI:
 
 class OrchestratorAgent(ResponsesAgent):
     """Orchestrator agent that classifies intent and routes to sub-agents."""
+
+    def predict_stream(
+        self, request: ResponsesAgentRequest
+    ) -> Generator[ResponsesAgentStreamEvent, None, None]:
+        """Stream the orchestrator response."""
+        response = self.predict(request)
+        yield from self.output_to_responses_items_stream(response.output)
 
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
         model = os.environ.get("SERVING_ENDPOINT", "databricks-claude-opus-4-6")
