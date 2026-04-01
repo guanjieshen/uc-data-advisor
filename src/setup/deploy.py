@@ -136,43 +136,35 @@ def _deploy_knowledge_base(config, w, warehouse_id):
     catalog = infra["advisor_catalog"]
     schema = infra.get("advisor_schema", "default")
     table = f"{catalog}.{schema}.knowledge_base"
-    embedded_table = f"{catalog}.{schema}.knowledge_base_embedded"
     vs_index = f"{catalog}.{schema}.knowledge_vs_index"
     vs_endpoint = infra.get("vs_endpoint", "")
     embedding_model = config.get("embedding_model", "databricks-bge-large-en")
 
     print(f"  [knowledge] Writing {len(kb)} FAQs to {table}...")
 
-    _run_sql(w, warehouse_id, f"DROP TABLE IF EXISTS {embedded_table}")
     _run_sql(w, warehouse_id, f"DROP TABLE IF EXISTS {table}")
     _run_sql(w, warehouse_id, f"""
         CREATE TABLE {table} (
-            id INT, question STRING, answer STRING, category STRING, source STRING
+            id INT, question STRING, answer STRING, category STRING, source STRING,
+            search_text STRING
         ) USING DELTA
         TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
     """)
 
-    # Insert FAQs
+    # Insert FAQs with search_text = question + answer
     BATCH = 10
     for i in range(0, len(kb), BATCH):
         batch = kb[i:i+BATCH]
         values = ",\n".join(
-            f"({i+j+1}, '{_esc(faq['question'])}', '{_esc(faq['answer'])}', '{_esc(faq.get('category',''))}', '{_esc(faq.get('source',''))}')"
+            f"({i+j+1}, '{_esc(faq['question'])}', '{_esc(faq['answer'])}', '{_esc(faq.get('category',''))}', '{_esc(faq.get('source',''))}', '{_esc(faq['question'] + ' ' + faq['answer'])}')"
             for j, faq in enumerate(batch)
         )
         _run_sql(w, warehouse_id, f"INSERT INTO {table} VALUES\n{values}")
 
     print(f"    Inserted {len(kb)} FAQs")
 
-    # Create embedded table with search_text column and CDF enabled
-    _run_sql(w, warehouse_id, f"""
-        CREATE OR REPLACE TABLE {embedded_table}
-        TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
-        AS SELECT *, concat(question, ' ', answer) AS search_text FROM {table}
-    """)
-
-    # Create VS index
-    _create_vs_index(w, vs_index, vs_endpoint, embedded_table, "id", "search_text", embedding_model)
+    # Create VS index on search_text column
+    _create_vs_index(w, vs_index, vs_endpoint, table, "id", "search_text", embedding_model)
 
     infra["vs_index_knowledge"] = vs_index
 
@@ -358,6 +350,7 @@ env:
     # Upload the specific config file as config/advisor_config.yaml
     # (matches the ADVISOR_CONFIG_PATH env var in app.yaml)
     config_src = os.path.abspath(config.get("_config_path", "config/advisor_config.yaml"))
+    _cli(["workspace", "mkdirs", f"{workspace_path}/config"], "config dir")
     _cli(["workspace", "import", f"{workspace_path}/config/advisor_config.yaml", "--file", config_src, "--format", "AUTO", "--overwrite"], "config upload")
 
     # Step 3: Deploy the app

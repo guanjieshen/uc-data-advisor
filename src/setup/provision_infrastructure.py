@@ -429,17 +429,26 @@ def _create_app(w, infra: dict, app_name: str, config: dict) -> None:
             env = {**os.environ, "DATABRICKS_HOST": host}
         return subprocess.run(cmd, capture_output=True, text=True, env=env)
 
+    def _extract_sp(app_data: dict) -> str:
+        """Extract SP client ID from app data, trying multiple field names."""
+        for key in ["service_principal_client_id", "effective_service_principal_id",
+                     "service_principal_id"]:
+            val = app_data.get(key, "")
+            if val:
+                return val
+        return ""
+
     # Check if app exists
     result = _cli(["apps", "get", app_name, "-o", "json"])
     if result.returncode == 0:
         try:
             app_data = json.loads(result.stdout)
-            sp_id = app_data.get("service_principal_client_id", "")
+            sp_id = _extract_sp(app_data)
             if sp_id:
                 infra["app_sp_client_id"] = sp_id
                 print(f"already exists (SP: {sp_id[:20]}...)")
             else:
-                print("already exists")
+                print("already exists (no SP in response)")
         except Exception:
             print("already exists")
         return
@@ -448,18 +457,34 @@ def _create_app(w, infra: dict, app_name: str, config: dict) -> None:
     result = _cli(["apps", "create", app_name, "--description",
                     f"UC Data Advisor — {infra.get('advisor_catalog', '')}"])
     if result.returncode == 0:
-        # Fetch the created app to get its SP
-        result2 = _cli(["apps", "get", app_name, "-o", "json"])
-        if result2.returncode == 0:
-            try:
-                app_data = json.loads(result2.stdout)
-                sp_id = app_data.get("service_principal_client_id", "")
+        # Poll for SP (may take a few seconds to be provisioned)
+        import time
+        for _ in range(6):
+            time.sleep(5)
+            result2 = _cli(["apps", "get", app_name, "-o", "json"])
+            if result2.returncode == 0:
+                try:
+                    app_data = json.loads(result2.stdout)
+                    sp_id = _extract_sp(app_data)
+                    if sp_id:
+                        infra["app_sp_client_id"] = sp_id
+                        print(f"created (SP: {sp_id[:20]}...)")
+                        return
+                except Exception:
+                    pass
+        # Also try SDK as fallback
+        try:
+            app_info = w.apps.get(app_name)
+            sp_id = getattr(app_info, "service_principal_client_id", "") or ""
+            if not sp_id:
+                sp_id = getattr(app_info, "effective_service_principal_id", "") or ""
+            if sp_id:
                 infra["app_sp_client_id"] = sp_id
-                print(f"created (SP: {sp_id[:20]}...)")
-            except Exception:
-                print("created")
-        else:
-            print("created")
+                print(f"created (SP via SDK: {sp_id[:20]}...)")
+                return
+        except Exception:
+            pass
+        print("created (SP not found)")
     else:
         print(f"FAILED: {result.stderr[:200]}")
 

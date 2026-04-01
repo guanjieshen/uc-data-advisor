@@ -12,19 +12,19 @@ env:
   - name: SERVING_ENDPOINT
     value: databricks-claude-opus-4-6
   - name: GENIE_SPACE_ID
-    value: "01f12d1b548a1fbca5ddbc497c9d9b28"
+    value: "01f12d439c12126f9ff410f4f560a752"
   - name: VS_INDEX_METADATA
     value: "acao_bakehouse_advisor_catalog.default.uc_metadata_vs_index"
   - name: VS_INDEX_KNOWLEDGE
     value: "acao_bakehouse_advisor_catalog.default.knowledge_vs_index"
   - name: PGHOST
-    value: "ep-dawn-recipe-d98wt6jn.database.ca-central-1.cloud.databricks.com"
+    value: "ep-wild-water-d96qe9dl.database.ca-central-1.cloud.databricks.com"
   - name: PGPORT
     value: "5432"
   - name: PGDATABASE
     value: "acao_bakehouse_advisor_sessions"
   - name: PGUSER
-    value: "e6eec1dd-ef78-4745-91e8-6854f9bd6f94"
+    value: "373741a9-cddc-4902-be5e-143bf20fa682"
   - name: LAKEBASE_INSTANCE
     value: "acao-bakehouse-advisor-sessions"
   - name: ORCHESTRATOR_ENDPOINT

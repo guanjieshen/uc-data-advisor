@@ -62,6 +62,10 @@ def teardown(config: dict, w) -> None:
     # 9. Drop advisor catalog
     _teardown_catalog(w, catalog, warehouse_id)
 
+    # Clear infrastructure state so next deploy starts fresh
+    config["infrastructure"] = {}
+    config.pop("generated", None)
+
     print()
     print("=" * 60)
     print("Teardown complete")
