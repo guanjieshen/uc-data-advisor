@@ -1,7 +1,7 @@
 """Deploy generated artifacts to the Databricks workspace.
 
 Creates Delta tables, VS indexes, metric views, materialized tables,
-updates Genie Space, generates app.yaml, and deploys the app.
+updates Genie Space tables.
 """
 
 import hashlib
@@ -39,9 +39,6 @@ def deploy(config: dict, w) -> None:
 
     # Step 5: Update Genie Space
     _deploy_genie_space(config, w)
-
-    # Step 6: Generate app.yaml and deploy app
-    _deploy_app(config, w)
 
     print()
     print("=" * 60)
@@ -245,136 +242,6 @@ def _deploy_genie_space(config, w):
         print("    Updated")
     except Exception as e:
         logger.warning(f"    Genie Space update failed: {e}")
-
-
-# ---------------------------------------------------------------------------
-# Step 6: App deployment
-# ---------------------------------------------------------------------------
-
-def _deploy_app(config, w):
-    """Generate app.yaml from config and deploy the app."""
-    infra = config.get("infrastructure", {})
-    app_name = infra.get("app_name", "uc-data-advisor")
-    lb = infra.get("lakebase", {})
-
-    print("  [app] Generating app.yaml...")
-
-    app_yaml = f"""command:
-  - "python"
-  - "-m"
-  - "uvicorn"
-  - "app:app"
-  - "--host"
-  - "0.0.0.0"
-  - "--port"
-  - "8000"
-
-env:
-  - name: SERVING_ENDPOINT
-    value: {infra.get('serving_endpoint', 'uc-advisor-llm')}
-  - name: GENIE_SPACE_ID
-    value: "{infra.get('genie_space_id', '')}"
-  - name: VS_INDEX_METADATA
-    value: "{infra.get('vs_index_metadata', '')}"
-  - name: VS_INDEX_KNOWLEDGE
-    value: "{infra.get('vs_index_knowledge', '')}"
-  - name: PGHOST
-    value: "{lb.get('host', '')}"
-  - name: PGPORT
-    value: "{lb.get('port', 5432)}"
-  - name: PGDATABASE
-    value: "{lb.get('database', '')}"
-  - name: PGUSER
-    value: "{infra.get('app_sp_client_id', '')}"
-  - name: LAKEBASE_INSTANCE
-    value: "{lb.get('instance', '')}"
-  - name: ORCHESTRATOR_ENDPOINT
-    value: "{infra.get('agent_endpoints', {}).get('orchestrator', '')}"
-  - name: ADVISOR_CONFIG_PATH
-    value: "config/advisor_config.yaml"
-"""
-
-
-    # Write app.yaml
-    app_dir = os.path.join(os.path.dirname(__file__), "..", "..", "app")
-    yaml_path = os.path.join(app_dir, "app.yaml")
-    with open(yaml_path, "w") as f:
-        f.write(app_yaml)
-    print(f"    Written to {yaml_path}")
-
-    import subprocess
-    workspace = config.get("workspace", {})
-    profile = workspace.get("profile", "")
-    token = workspace.get("token", "")
-    host = workspace.get("host", "")
-
-    def _cli(cmd_args, description=""):
-        cmd = ["databricks"] + cmd_args
-        env = None
-        if token and host:
-            env = {**os.environ, "DATABRICKS_HOST": host, "DATABRICKS_TOKEN": token}
-        elif profile:
-            cmd += ["-p", profile]
-        elif host:
-            env = {**os.environ, "DATABRICKS_HOST": host}
-        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
-        if result.returncode != 0:
-            logger.warning(f"{description} failed: {result.stderr[:300]}")
-        return result
-
-    # Step 1: Create the app if it doesn't exist
-    print(f"  [app] Creating app {app_name}...", end=" ", flush=True)
-    result = _cli(["apps", "get", app_name], "app get")
-    if result.returncode != 0:
-        result = _cli([
-            "apps", "create", app_name,
-            "--description", f"UC Data Advisor — {infra.get('advisor_catalog', '')}",
-        ], "app create")
-        if result.returncode == 0:
-            print("created")
-        else:
-            print(f"FAILED (create the app manually: databricks apps create {app_name})")
-            return
-    else:
-        print("already exists")
-
-    # Step 2: Upload app files to workspace
-    deployer_user = w.current_user.me().user_name
-    workspace_path = f"/Users/{deployer_user}/{app_name}"
-
-    print(f"  [app] Uploading to {workspace_path}...")
-    result = _cli(["workspace", "import-dir", app_dir, workspace_path, "--overwrite"], "app upload")
-    if result.returncode != 0:
-        return
-
-    # Upload the specific config file as config/advisor_config.yaml
-    # (matches the ADVISOR_CONFIG_PATH env var in app.yaml)
-    config_src = os.path.abspath(config.get("_config_path", "config/advisor_config.yaml"))
-    _cli(["workspace", "mkdirs", f"{workspace_path}/config"], "config dir")
-    _cli(["workspace", "import", f"{workspace_path}/config/advisor_config.yaml", "--file", config_src, "--format", "AUTO", "--overwrite"], "config upload")
-
-    # Step 3: Deploy the app
-    print(f"  [app] Deploying {app_name}...")
-    result = _cli(["apps", "deploy", app_name, "--source-code-path", f"/Workspace{workspace_path}"], "app deploy")
-    if result.returncode == 0:
-        try:
-            resp = json.loads(result.stdout)
-            state = resp.get("status", {}).get("state", "UNKNOWN")
-            print(f"    {state}")
-            # Print the app URL
-            app_info = _cli(["apps", "get", app_name, "-o", "json"], "app get")
-            if app_info.returncode == 0:
-                try:
-                    app_data = json.loads(app_info.stdout)
-                    url = app_data.get("url", "")
-                    if url:
-                        print(f"    URL: {url}")
-                except Exception:
-                    pass
-        except Exception:
-            print("    Deployed")
-    else:
-        print(f"    Deploy failed — check: databricks apps get {app_name}")
 
 
 # ---------------------------------------------------------------------------

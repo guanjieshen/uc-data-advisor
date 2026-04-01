@@ -8,13 +8,14 @@ from uuid import uuid4
 
 from openai import OpenAI, AsyncOpenAI, BadRequestError
 from mlflow.pyfunc import ResponsesAgent
-from mlflow.types.responses import (
-    ResponsesAgentRequest,
-    ResponsesAgentResponse,
-    ResponsesAgentStreamEvent,
-)
+from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse
 
-from ..config import get_oauth_token, get_workspace_host, IS_DATABRICKS_APP
+try:
+    from mlflow.types.responses import ResponsesAgentStreamEvent
+except ImportError:
+    ResponsesAgentStreamEvent = None
+
+from ..config import get_oauth_token, get_workspace_host
 
 logger = logging.getLogger(__name__)
 

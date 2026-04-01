@@ -33,12 +33,28 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     print("=" * 60)
 
     workspace_host = config.get("workspace", {}).get("host", "")
-    scope = infra.get("secret_scope", app_name)
+    scope = infra.get("secret_scope", infra.get("app_name", ""))
     source_catalogs = ",".join(config.get("source_catalogs", []))
+
+    # Resolve SP credentials from secret scope at deploy time
+    # Tries {{secrets/...}} interpolation first; falls back to reading scope values directly
+    sp_client_id = ""
+    sp_client_secret = ""
+    if scope:
+        try:
+            import base64
+            raw_id = w.secrets.get_secret(scope=scope, key="sp-client-id").value or ""
+            raw_secret = w.secrets.get_secret(scope=scope, key="sp-client-secret").value or ""
+            # SDK returns base64-encoded values
+            sp_client_id = base64.b64decode(raw_id).decode() if raw_id else ""
+            sp_client_secret = base64.b64decode(raw_secret).decode() if raw_secret else ""
+        except Exception as e:
+            logger.warning(f"Could not read secrets from scope '{scope}': {e}")
+
     env_vars = {
         "DATABRICKS_HOST": workspace_host,
-        "DATABRICKS_CLIENT_ID": "{{secrets/" + scope + "/sp-client-id}}",
-        "DATABRICKS_CLIENT_SECRET": "{{secrets/" + scope + "/sp-client-secret}}",
+        "DATABRICKS_CLIENT_ID": sp_client_id,
+        "DATABRICKS_CLIENT_SECRET": sp_client_secret,
         "SERVING_ENDPOINT": infra.get("serving_endpoint", ""),
         "GENIE_SPACE_ID": infra.get("genie_space_id", ""),
         "VS_INDEX_METADATA": infra.get("vs_index_metadata", ""),
@@ -47,11 +63,16 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     }
     env_vars = {k: v for k, v in env_vars.items() if v}
 
+    # Also try {{secrets/...}} refs — preferred if the workspace supports it
+    secret_env_vars = dict(env_vars)
+    secret_env_vars["DATABRICKS_CLIENT_ID"] = "{{secrets/" + scope + "/sp-client-id}}"
+    secret_env_vars["DATABRICKS_CLIENT_SECRET"] = "{{secrets/" + scope + "/sp-client-secret}}"
+
     def _deploy_one(agent_name, model_info, deploy_env_vars=None):
         ep_name = f"{app_name}-{agent_name}-agent"
         model_name = model_info["model_name"]
         version = model_info["version"]
-        ep_env = deploy_env_vars or env_vars
+        ep_env = deploy_env_vars or secret_env_vars
 
         _wait_for_endpoint_ready(w, ep_name)
 
@@ -60,14 +81,29 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
         except Exception:
             pass
 
-        agents.deploy(
-            model_name=model_name,
-            model_version=int(version),
-            endpoint_name=ep_name,
-            scale_to_zero=True,
-            environment_vars=ep_env,
-            tags={"app": app_name, "agent": agent_name},
-        )
+        # Try with {{secrets/...}} refs first; fall back to plain env vars if not supported
+        try:
+            agents.deploy(
+                model_name=model_name,
+                model_version=int(version),
+                endpoint_name=ep_name,
+                scale_to_zero=True,
+                environment_vars=ep_env,
+                tags={"app": app_name, "agent": agent_name},
+            )
+        except Exception as e:
+            if "Invalid secret" in str(e):
+                logger.info(f"Secret refs not supported, using runtime scope resolution for {ep_name}")
+                agents.deploy(
+                    model_name=model_name,
+                    model_version=int(version),
+                    endpoint_name=ep_name,
+                    scale_to_zero=True,
+                    environment_vars=deploy_env_vars or env_vars,
+                    tags={"app": app_name, "agent": agent_name},
+                )
+            else:
+                raise
 
         # Wait for endpoint to be READY before patching config
         _wait_for_endpoint_ready(w, ep_name)
@@ -121,16 +157,16 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
 
 
 def grant_agent_permissions(config: dict, w) -> None:
-    """Grant app SP CAN_QUERY on agent endpoints. Run after endpoints are provisioned."""
+    """Grant configured SP CAN_QUERY on agent endpoints. Run after endpoints are provisioned."""
     infra = config.get("infrastructure", {})
     endpoints = infra.get("agent_endpoints", {})
-    app_sp = infra.get("app_sp_client_id", "")
+    sp = config.get("service_principal", "")
 
     if not endpoints:
         print("  No agent endpoints configured")
         return
-    if not app_sp:
-        print("  No app SP configured")
+    if not sp:
+        print("  No service_principal configured")
         return
 
     print("=" * 60)
@@ -158,7 +194,7 @@ def grant_agent_permissions(config: dict, w) -> None:
     else:
         print(f"\r  Timed out waiting for endpoints ({int(time.time() - start)}s){' ' * 20}")
 
-    _grant_endpoint_permissions(w, infra, config, endpoints, app_sp)
+    _grant_endpoint_permissions(w, infra, config, endpoints, sp)
 
 
 def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):
@@ -234,28 +270,22 @@ def _wait_for_endpoint_ready(w, ep_name: str, timeout: int = 600):
     print()
 
 
-def _grant_endpoint_permissions(w, infra, config, endpoints, app_sp):
-    """Grant app SP and agent SP CAN_QUERY on each agent endpoint via SDK."""
+def _grant_endpoint_permissions(w, infra, config, endpoints, sp):
+    """Grant configured SP CAN_QUERY on each agent endpoint via SDK."""
     from databricks.sdk.service.serving import ServingEndpointAccessControlRequest, ServingEndpointPermissionLevel
-
-    agent_sp = infra.get("agent_sp_client_id", "")
-    sp_list = [sp for sp in [app_sp, agent_sp] if sp]
 
     for agent_name, ep_name in endpoints.items():
         try:
             ep = w.serving_endpoints.get(ep_name)
-            acl = [
-                ServingEndpointAccessControlRequest(
-                    service_principal_name=sp,
-                    permission_level=ServingEndpointPermissionLevel.CAN_QUERY,
-                )
-                for sp in sp_list
-            ]
             w.serving_endpoints.update_permissions(
                 serving_endpoint_id=ep.id,
-                access_control_list=acl,
+                access_control_list=[
+                    ServingEndpointAccessControlRequest(
+                        service_principal_name=sp,
+                        permission_level=ServingEndpointPermissionLevel.CAN_QUERY,
+                    ),
+                ],
             )
-            for sp in sp_list:
-                print(f"    CAN_QUERY on endpoint '{ep_name}' → SP {sp}")
+            print(f"    CAN_QUERY on endpoint '{ep_name}' → SP {sp}")
         except Exception as e:
             logger.warning(f"Failed to grant permissions on {ep_name}: {e}")

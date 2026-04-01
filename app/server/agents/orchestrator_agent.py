@@ -1,8 +1,7 @@
 """Orchestrator as a ResponsesAgent for Model Serving deployment.
 
 Classifies intent via LLM, routes to sub-agent endpoints, returns the response.
-This enables calling the full orchestrator via a single serving endpoint
-without going through the Databricks App.
+Single entry point for all clients (Teams, notebooks, HTTP).
 """
 
 import os
@@ -13,11 +12,12 @@ from uuid import uuid4
 
 from openai import OpenAI, BadRequestError
 from mlflow.pyfunc import ResponsesAgent
-from mlflow.types.responses import (
-    ResponsesAgentRequest,
-    ResponsesAgentResponse,
-    ResponsesAgentStreamEvent,
-)
+from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse
+
+try:
+    from mlflow.types.responses import ResponsesAgentStreamEvent
+except ImportError:
+    ResponsesAgentStreamEvent = None
 
 from ..config import get_workspace_client, get_workspace_host, get_oauth_token
 

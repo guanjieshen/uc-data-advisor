@@ -85,8 +85,8 @@ def main():
     print("=" * 60)
     print("Setup complete!")
     print("=" * 60)
-    app_name = config.get("infrastructure", {}).get("app_name", "uc-data-advisor")
-    print(f"  App: {app_name}")
+    deployment = config.get("infrastructure", {}).get("app_name", "uc-data-advisor")
+    print(f"  Deployment: {deployment}")
     print(f"  Config saved to: {args.config}")
     print()
 
