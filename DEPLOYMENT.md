@@ -1,6 +1,6 @@
 # UC Data Advisor — Deployment Guide
 
-Deploy a multi-agent Unity Catalog data advisor for any Databricks workspace. The setup pipeline auto-creates all infrastructure, registers agents as MLflow models on Model Serving, and generates all content from your catalog metadata.
+Deploy a multi-agent Unity Catalog data advisor on any Databricks workspace (AWS or Azure). The setup pipeline auto-creates all infrastructure, registers agents as MLflow models on Model Serving, and generates all content from your catalog metadata.
 
 ## Prerequisites
 
@@ -8,7 +8,8 @@ Deploy a multi-agent Unity Catalog data advisor for any Databricks workspace. Th
 - **Databricks CLI** installed and authenticated (`databricks auth login --profile <name>`)
 - **Python 3.12+** with `uv` installed
 - **Source data catalogs** already populated in Unity Catalog
-- Deployer must have **workspace admin** or equivalent permissions to create catalogs, endpoints, service principals, and apps
+- **Service principal** created in the workspace (you must own it to generate OAuth secrets)
+- Deployer must have **workspace admin** or equivalent permissions to create catalogs, endpoints, and secret scopes
 
 ## Quick Start
 
@@ -21,7 +22,7 @@ cd uc-data-advisor
 cp config/advisor_config.example.yaml config/my_config.yaml
 ```
 
-Edit `config/my_config.yaml` — you only need to set 2 things:
+Edit `config/my_config.yaml` — you need to set 3 things:
 
 ```yaml
 # 1. Source catalogs (REQUIRED)
@@ -32,7 +33,10 @@ source_catalogs:
 # 2. Workspace connection (REQUIRED)
 workspace:
   host: "https://my-workspace.cloud.databricks.com"
-  profile: my-profile    # or use token/host-only auth
+  profile: my-profile
+
+# 3. Service principal (REQUIRED)
+service_principal: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
 ```bash
@@ -43,7 +47,7 @@ uv run python -m src.setup.run --config config/my_config.yaml
 #   deploy-agents → grant-agent-permissions → deploy
 ```
 
-The app URL is printed at the end. Run benchmarks separately (see [Benchmarks](#benchmarks) section).
+The orchestrator endpoint name is printed at the end. Test it in the Model Serving playground or via the benchmark notebook.
 
 ## What the Setup Pipeline Does
 
@@ -56,29 +60,26 @@ Creates all Databricks resources (idempotent — safe to re-run):
 | Step | Resource | How Created |
 |------|----------|-------------|
 | 1 | **SQL Warehouse** | Auto-discovers first available, or uses `warehouse_id` from config |
-| 2 | **Advisor Catalog** | `CREATE CATALOG IF NOT EXISTS {app_name}_catalog` |
+| 2 | **Advisor Catalog** | `CREATE CATALOG IF NOT EXISTS` (falls back to default storage if managed location fails) |
 | 3 | **Vector Search Endpoint** | SDK `create_endpoint()`, polls until ONLINE |
-| 4 | **Databricks App** | Created via CLI, captures auto-created service principal |
-| 5 | **Lakebase Instance** | SDK `create_database_instance()`, creates database + adds SP roles |
-| 6 | **LLM Endpoint** | Uses pay-per-token foundation model (e.g. `databricks-claude-opus-4-6`) |
-| 7 | **Genie Space** | REST API, populated with source tables in deploy stage |
-| 8 | **Agent SP** | Deployer-owned SP with OAuth secret stored in Databricks secret scope |
+| 4 | **LLM Endpoint** | Uses pay-per-token foundation model (e.g. `databricks-claude-opus-4-6`) |
+| 5 | **Genie Space** | REST API, populated with source tables in deploy stage |
+| 6 | **SP OAuth Secret** | Generates secret for configured SP, stores in Databricks secret scope |
 
 ### Step 2: Grant UC Permissions
 
-Grants the app SP and agent SP access to all required resources:
-- `USE CATALOG` + `SELECT` on each source catalog
+Grants the configured service principal access to all required resources:
+- `USE CATALOG` + `SELECT` on each source catalog (+ `USE SCHEMA` per schema)
 - `ALL PRIVILEGES` on advisor catalog
 - `CAN_USE` on SQL warehouse
 - `CAN_RUN` on Genie Space
-- Lakebase instance role + database grants
+- `workspace-access` entitlement
 
 ### Step 3: Audit Metadata
 
 Walks your source catalogs via the Databricks SDK:
 - Collects catalog/schema/table/column names, types, comments, owners
 - Computes metadata description coverage percentage
-- Stores full audit in config
 
 ### Step 4: Generate Content
 
@@ -86,43 +87,42 @@ From the audit, auto-generates:
 - **System prompts** — per-agent prompts with organization name and data domains
 - **Knowledge base** — 10+ governance FAQs plus per-catalog and per-table dynamic FAQs
 - **Benchmark questions** — 8 questions across discovery, metrics, QA, and general categories
-- **UI suggestions** — landing page suggestions based on notable tables
 - **Genie Space table list** — source tables + materialized metric tables
 
 ### Step 5: Register Agent Models
 
-Registers each agent (discovery, metrics, qa) as an MLflow model in Unity Catalog using the model-from-code pattern. Models are versioned and deployed in parallel.
+Registers each agent (discovery, metrics, qa, orchestrator) as an MLflow model in Unity Catalog using the model-from-code pattern. Models are versioned and deployed in parallel.
 
 ### Step 6: Deploy Agent Endpoints
 
 Deploys each registered model to its own Model Serving endpoint via the Databricks Agent Bricks SDK (`agents.deploy()`). Endpoints:
 - Scale to zero when idle
-- Authenticate via OAuth secret scope references (`{{secrets/scope/key}}`)
-- Receive environment variables for Genie Space, VS indexes, and LLM endpoint
+- Receive SP credentials read from secret scope at deploy time
+- Receive environment variables for Genie Space, VS indexes, LLM endpoint, and `SOURCE_CATALOGS`
+- Orchestrator deployed last with sub-agent endpoint names
 
 ### Step 7: Grant Agent Endpoint Permissions
 
-Waits for all agent endpoints to be READY, then grants `CAN_QUERY` to the app SP so the Databricks App can call them.
+Waits for all agent endpoints to be READY, then grants `CAN_QUERY` to the configured SP.
 
-### Step 8: Deploy Artifacts + App
+### Step 8: Deploy Artifacts
 
-1. Writes metadata and knowledge base to Delta tables
-2. Creates Vector Search indexes (delta sync)
+1. Writes metadata docs to Delta table + creates Vector Search index (delta sync)
+2. Writes knowledge base FAQs to Delta table + creates Vector Search index (delta sync)
 3. Updates Genie Space table list
-4. Generates `app.yaml` and deploys the Databricks App
 
 ## Permissions
 
-No manual permission configuration is needed. The pipeline auto-manages two service principals:
+The pipeline uses a single user-provided service principal for everything:
 
-| SP | Created By | Purpose |
-|----|-----------|---------|
-| **App SP** | Databricks (auto-created with app) | App runtime — calls agent endpoints, Lakebase |
-| **Agent SP** | Pipeline (deployer-owned) | Model Serving auth — outbound API calls from agents |
-
-Both SPs receive identical grants. The agent SP also gets:
-- `workspace-access` entitlement (required for API access from Model Serving)
-- OAuth secret stored in a Databricks secret scope
+| What | How |
+|------|-----|
+| **UC grants** | `USE CATALOG`, `SELECT`, `ALL PRIVILEGES` via SQL |
+| **Warehouse access** | `CAN_USE` via permissions API |
+| **Genie Space access** | `CAN_RUN` via permissions API |
+| **Endpoint access** | `CAN_QUERY` via SDK |
+| **Model Serving auth** | OAuth M2M — secret generated and stored in Databricks secret scope |
+| **Workspace access** | `workspace-access` entitlement via SCIM |
 
 ## Running Individual Steps
 
@@ -136,6 +136,7 @@ uv run python -m src.setup.run --config config/my_config.yaml --step deploy-agen
 uv run python -m src.setup.run --config config/my_config.yaml --step grant-agent-permissions
 uv run python -m src.setup.run --config config/my_config.yaml --step deploy
 uv run python -m src.setup.run --config config/my_config.yaml --step verify
+uv run python -m src.setup.run --config config/my_config.yaml --step teardown
 uv run python -m src.setup.run --config config/my_config.yaml --step all  # default
 ```
 
@@ -149,6 +150,7 @@ source_catalogs:          # List of Unity Catalog catalogs to scan
 workspace:
   host: "https://..."     # Workspace URL
   profile: my-profile     # CLI profile (or use token/host-only auth)
+service_principal: "xxx"  # SP application (client) ID — you must own this SP
 ```
 
 Optional overrides (all have smart defaults if omitted):
@@ -173,9 +175,9 @@ exclude_schemas: [staging, temp]       # Skip these schemas
 ## Architecture
 
 ```
-User → Databricks App (FastAPI)
+Client (Teams, Notebook, HTTP)
          ↓
-    Orchestrator (LLM intent classifier)
+    Orchestrator Endpoint (classifies intent, routes)
          ↓
     ┌────┼────┐
     ↓    ↓    ↓
@@ -187,10 +189,11 @@ User → Databricks App (FastAPI)
     Unity Catalog (source data)
 ```
 
-- **Model Serving**: Each agent runs on its own endpoint with scale-to-zero. Agents authenticate outbound calls via OAuth M2M (secret scope).
-- **Genie Space**: The Metrics agent sends natural language questions to Genie, which translates to SQL and returns results.
-- **Vector Search**: Discovery agent uses a metadata VS index for semantic table search. QA agent uses a knowledge base VS index for FAQ retrieval. Both are delta sync.
-- **Lakebase**: Stores conversation history and user feedback.
+- **Orchestrator endpoint**: Single entry point — classifies intent via LLM, routes to sub-agent endpoints, handles general responses directly
+- **Model Serving**: Each agent runs on its own endpoint with scale-to-zero. Authenticates outbound calls via SP OAuth M2M
+- **Genie Space**: Metrics agent sends natural language questions to Genie, which translates to SQL and returns results
+- **Vector Search**: Discovery agent uses a metadata VS index for semantic table search. QA agent uses a knowledge base VS index for FAQ retrieval. Both are delta sync
+- **Secret Scope**: SP credentials stored securely, read at deploy time and injected as endpoint env vars
 
 ## Teardown
 
@@ -205,18 +208,10 @@ This deletes (in order):
 2. Vector Search indexes
 3. Genie spaces
 4. Secret scope
-5. Agent service principal
-6. Databricks App
-7. Lakebase instance
-8. Vector Search endpoint
-9. Advisor catalog (CASCADE)
+5. Vector Search endpoint
+6. Advisor catalog (CASCADE)
 
-The config file retains the `infrastructure` section so you can inspect what was deleted. Reset the config to redeploy:
-
-```yaml
-infrastructure: {}
-generated: {}
-```
+The teardown clears the config's `infrastructure` and `generated` sections automatically.
 
 ## Benchmarks
 
@@ -224,13 +219,11 @@ The benchmark suite runs 8 questions across all 4 agent types (discovery, metric
 
 ### Option 1: Databricks notebook (recommended)
 
-Upload `tests/benchmark_notebook.py` to your workspace and run it on any cluster. Calls agent serving endpoints directly via the Databricks SDK — no app URL or external auth needed.
+Upload `tests/benchmark_notebook.py` to your workspace and run it on any cluster. Calls agent serving endpoints directly via the Databricks SDK — no external auth needed.
 
 1. Import the notebook: **Workspace > Import > File > `tests/benchmark_notebook.py`**
 2. Set the `config_path` widget to your uploaded config file path
 3. **Run All**
-
-Results are displayed as an interactive DataFrame table.
 
 ### Option 2: Pipeline verify step (local)
 
@@ -238,16 +231,12 @@ Results are displayed as an interactive DataFrame table.
 uv run python -m src.setup.run --config config/my_config.yaml --step verify
 ```
 
-Calls the deployed app's HTTP API. Authenticates using the pipeline's workspace client.
-
 ### Option 3: Standalone script (local)
 
 ```bash
 APP_URL="https://your-app.aws.databricksapps.com" \
   uv run python tests/benchmark.py
 ```
-
-Authenticates via `databricks auth token` CLI or SDK. Set `DATABRICKS_PROFILE` or `DATABRICKS_TOKEN` if needed.
 
 ### Benchmark criteria
 
@@ -262,7 +251,7 @@ Authenticates via `databricks auth token` CLI or SDK. Set `DATABRICKS_PROFILE` o
 Re-run specific steps to update:
 
 ```bash
-# After adding new source tables — re-audit, regenerate, and redeploy
+# After adding new source tables — re-audit, regenerate, and redeploy artifacts
 uv run python -m src.setup.run --config config/my_config.yaml --step audit
 uv run python -m src.setup.run --config config/my_config.yaml --step generate
 uv run python -m src.setup.run --config config/my_config.yaml --step deploy
@@ -270,25 +259,23 @@ uv run python -m src.setup.run --config config/my_config.yaml --step deploy
 # To update agent code — re-register models and redeploy endpoints
 uv run python -m src.setup.run --config config/my_config.yaml --step register
 uv run python -m src.setup.run --config config/my_config.yaml --step deploy-agents
-```
-
-To sync Vector Search indexes manually:
-```python
-from databricks.sdk import WorkspaceClient
-w = WorkspaceClient()
-w.vector_search_indexes.sync_index(index_name="catalog.schema.index_name")
+uv run python -m src.setup.run --config config/my_config.yaml --step grant-agent-permissions
 ```
 
 ## Troubleshooting
 
-**Warehouse not found**: Either start a warehouse in the workspace UI, or pass `warehouse_id` in your config to use a specific one.
+**Warehouse not found**: Either start a warehouse in the workspace UI, or pass `warehouse_id` in your config.
 
 **VS endpoint stuck provisioning**: VS endpoints can take 5-10 minutes. Re-run `--step provision` — it detects the existing endpoint.
 
-**Agent endpoints timeout**: First request after scale-to-zero takes up to 5 minutes (cold start). The benchmark uses a 300s timeout to accommodate this.
+**Agent endpoints timeout**: First request after scale-to-zero takes up to 5 minutes (cold start). The benchmark uses a 300s timeout.
 
-**Genie Space errors**: Ensure the agent SP has `CAN_RUN` on the Genie space and `CAN_USE` on the SQL warehouse. Re-run `--step grant-uc` to fix.
+**Genie Space errors**: Ensure the SP has `CAN_RUN` on the Genie space and `CAN_USE` on the SQL warehouse. Re-run `--step grant-uc`.
 
-**Knowledge base unavailable**: VS indexes take a few minutes to sync after creation. Wait and retry, or manually sync via the Catalog UI.
+**Knowledge base unavailable**: VS indexes take a few minutes to sync after creation. Wait and retry.
 
-**App deploy fails**: Ensure the Databricks CLI is authenticated with the correct profile. Check `databricks apps get <app-name>` for status.
+**Model registration fails (S3/ABFSS access denied)**: Some workspaces restrict artifact uploads from local machines. Run the register step from a Databricks notebook or cluster.
+
+**Permission denied on sub-agent endpoints**: `agents.deploy()` resets endpoint permissions. Always run `--step grant-agent-permissions` after `--step deploy-agents`.
+
+**Invalid secret provided**: The `{{secrets/...}}` syntax isn't supported on all workspaces. The pipeline falls back to reading secrets from the scope at deploy time and passing them as env vars.

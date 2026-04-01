@@ -2,24 +2,20 @@
 
 ## Overview
 
-The UC Data Advisor is a multi-agent system for natural language dataset discovery over Unity Catalog. It deploys as a Databricks App with a React frontend and FastAPI backend. The orchestrator classifies user intent and routes to specialized agents running on individual Model Serving endpoints.
+The UC Data Advisor is a multi-agent system for natural language dataset discovery over Unity Catalog. All agents — including the orchestrator — run on individual Databricks Model Serving endpoints. No Databricks App is required. The orchestrator endpoint is the single entry point, callable from Teams, notebooks, or any HTTP client.
 
 ## Architecture Diagram
 
 ```mermaid
 flowchart TB
-    subgraph APP["DATABRICKS APP (FastAPI + React)"]
-        FE["React Frontend<br/><i>Chat UI · Feedback · Suggestions</i>"]
-        API["FastAPI Backend<br/><i>Chat · Feedback · Health APIs</i>"]
-        ORCH["Orchestrator<br/><i>LLM Intent Classifier</i><br/><i>Routes to Sub-Agents</i>"]
-        LB["Lakebase<br/><i>Session Memory · Feedback</i>"]
-        MLF["MLflow Tracing<br/><i>Agent Observability</i>"]
-        FE --> API --> ORCH
-        ORCH -.-> LB
-        ORCH -.-> MLF
+    subgraph CLIENTS["CLIENTS"]
+        TEAMS["Microsoft Teams Bot"]
+        NB["Databricks Notebook"]
+        HTTP["Any HTTP Client"]
     end
 
     subgraph SERVING["MODEL SERVING ENDPOINTS (Agent Bricks)"]
+        ORCH["Orchestrator Agent<br/><i>LLM Intent Classifier</i><br/><i>Routes to Sub-Agents</i>"]
         DA["Discovery Agent<br/><i>Dataset Existence · Schema</i><br/><b>Tables · Columns · Descriptions</b>"]
         DM["Metrics Agent<br/><i>Compute Metrics on</i><br/><b>Unity Catalog Assets</b>"]
         QA["Q&A Agent<br/><i>RAG over Knowledge Base</i><br/><b>FAQ · Governance · Docs</b>"]
@@ -40,13 +36,13 @@ flowchart TB
         UCat[("Unity Catalog<br/><b>Source Catalogs</b><br/><i>Catalogs · Schemas · Tables · Columns</i>")]
     end
 
-    subgraph AUTH["AUTH & SECRETS"]
-        SP_APP["App SP<br/><i>Auto-created</i>"]
-        SP_AGENT["Agent SP<br/><i>OAuth M2M</i>"]
+    subgraph AUTH["AUTH"]
+        SP["Service Principal<br/><i>User-provided · OAuth M2M</i>"]
         SCOPE["Secret Scope<br/><i>Client ID + Secret</i>"]
-        SP_AGENT -.-> SCOPE
+        SP -.-> SCOPE
     end
 
+    CLIENTS --> ORCH
     ORCH -->|discovery| DA
     ORCH -->|metrics| DM
     ORCH -->|Q&A| QA
@@ -64,85 +60,78 @@ flowchart TB
     GENIE --> UCat
     UC_API --> UCat
 
-    SP_APP -->|CAN_QUERY| SERVING
-    SP_AGENT -->|OAuth| TOOLS
+    SP -->|CAN_QUERY| SERVING
+    SP -->|OAuth M2M| TOOLS
 
-    classDef app fill:#e8f4f8,stroke:#0077b6
+    classDef clients fill:#e8f4f8,stroke:#0077b6
     classDef serving fill:#fff3e0,stroke:#ff9800
     classDef llm fill:#fce4ec,stroke:#e91e63
     classDef tools fill:#f3e5f5,stroke:#9c27b0
     classDef data fill:#e8f5e9,stroke:#4caf50
     classDef auth fill:#f5f5f5,stroke:#757575
 
-    class FE,API,ORCH,LB,MLF app
-    class DA,DM,QA serving
+    class TEAMS,NB,HTTP clients
+    class ORCH,DA,DM,QA serving
     class CLAUDE llm
     class UC_API,VS1,GENIE,VS2 tools
     class UCat data
-    class SP_APP,SP_AGENT,SCOPE auth
+    class SP,SCOPE auth
 ```
 
 ## Component Details
 
-### Databricks App
-
-| Component | Description |
-|-----------|-------------|
-| **React Frontend** | Chat interface with message history, thumbs up/down feedback, and landing page suggestions |
-| **FastAPI Backend** | `/api/chat`, `/api/feedback`, `/api/health`, `/api/ui-config` endpoints |
-| **Orchestrator** | Single LLM call to classify intent (discovery/metrics/qa/general), then routes to the matching agent endpoint via HTTP |
-| **Lakebase** | PostgreSQL-compatible database for session history and user feedback |
-| **MLflow Tracing** | Automatic trace logging for orchestrator classification and agent calls |
-
 ### Model Serving Endpoints
 
-Each agent is registered as an MLflow model in Unity Catalog and deployed to its own Model Serving endpoint via the Agent Bricks SDK.
+All agents are registered as MLflow models in Unity Catalog and deployed to individual Model Serving endpoints via the Agent Bricks SDK.
 
 | Agent | MLflow Class | Tools | Data Source |
 |-------|-------------|-------|-------------|
+| **Orchestrator** | `OrchestratorAgent` | None (routes to sub-agents) | LLM for classification |
 | **Discovery** | `DiscoveryAgent` | `list_catalogs`, `list_schemas`, `list_tables`, `get_table_details`, `search_tables`, `semantic_search_tables` | UC API + VS metadata index |
 | **Metrics** | `MetricsAgent` | `query_genie` | Genie Space (NL-to-SQL) |
 | **Q&A** | `QAAgent` | `search_knowledge_base` | VS knowledge base index |
 
 Endpoint properties:
-- **Scale to zero** when idle (cost-efficient)
-- **OAuth M2M** authentication via secret scope references (`{{secrets/scope/key}}`)
+- **Scale to zero** when idle
+- **OAuth M2M** authentication via SP credentials injected as env vars at deploy time
 - **Environment variables**: `DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`, `SERVING_ENDPOINT`, `GENIE_SPACE_ID`, `VS_INDEX_METADATA`, `VS_INDEX_KNOWLEDGE`, `SOURCE_CATALOGS`
+- **Orchestrator** also gets: `DISCOVERY_AGENT_ENDPOINT`, `METRICS_AGENT_ENDPOINT`, `QA_AGENT_ENDPOINT`
 
 ### Authentication
 
-| SP | Created By | Used For |
-|----|-----------|----------|
-| **App SP** | Databricks (auto-created with app) | App runtime — calls agent endpoints, Lakebase, LLM endpoint |
-| **Agent SP** | Setup pipeline (deployer-owned) | Model Serving outbound calls — UC API, VS, Genie, LLM |
+A single user-provided service principal handles all auth:
 
-The agent SP:
-- Gets `workspace-access` entitlement via SCIM
-- Has an OAuth secret generated via `service_principal_secrets_proxy`
-- Credentials stored in a Databricks secret scope
-- Referenced by endpoints as `{{secrets/{scope}/sp-client-id}}` and `{{secrets/{scope}/sp-client-secret}}`
+| What | Permission |
+|------|-----------|
+| **UC catalogs** | `USE CATALOG` + `SELECT` on source, `ALL PRIVILEGES` on advisor |
+| **SQL warehouse** | `CAN_USE` |
+| **Genie Space** | `CAN_RUN` |
+| **Agent endpoints** | `CAN_QUERY` |
+| **Model Serving outbound** | OAuth M2M via `DATABRICKS_CLIENT_ID` + `DATABRICKS_CLIENT_SECRET` |
 
-Both SPs receive identical UC, warehouse, Genie, Lakebase, and endpoint grants.
+The SP's OAuth secret is:
+1. Generated via `service_principal_secrets_proxy.create()`
+2. Stored in a Databricks secret scope
+3. Read from the scope at deploy time by the pipeline
+4. Injected as env vars into serving endpoints
 
 ### Tools & Retrieval
 
 | Tool | Used By | Implementation |
 |------|---------|----------------|
 | **UC API Tools** | Discovery | Databricks SDK — `catalogs.list()`, `schemas.list()`, `tables.list()`, `tables.get()`. Scoped to `SOURCE_CATALOGS` env var |
-| **VS Metadata Index** | Discovery | Delta Sync Vector Search index over `uc_metadata_docs` table. Embedding model: `databricks-bge-large-en` |
-| **Genie Space** | Metrics | REST API — starts conversation, polls for SQL results. Warehouse executes generated SQL |
-| **VS Knowledge Index** | Q&A | Delta Sync Vector Search index over `knowledge_base` table. Auto-generated governance FAQs |
-| **Lakebase** | Orchestrator | `asyncpg` connection to Lakebase PostgreSQL instance for session history and feedback |
+| **VS Metadata Index** | Discovery | Delta Sync Vector Search index over `uc_metadata_docs` table |
+| **Genie Space** | Metrics | REST API — starts conversation, polls for SQL results |
+| **VS Knowledge Index** | Q&A | Delta Sync Vector Search index over `knowledge_base` table |
 
 ## Data Flow
 
-1. User sends a message via the React chat UI
-2. FastAPI routes to the **Orchestrator**, which loads session history from Lakebase
-3. Orchestrator makes a single LLM call to classify intent: `discovery`, `metrics`, `qa`, or `general`
-4. For `general`: orchestrator responds directly via LLM (no agent call)
-5. For agent intents: orchestrator calls the agent's Model Serving endpoint via `/serving-endpoints/{name}/invocations`
-6. Agent uses its tools (UC API, Genie, VS) and LLM to produce a response
-7. Response returned to user; exchange saved to Lakebase for session continuity
+1. Client sends a message to the **orchestrator endpoint** via `/serving-endpoints/{name}/invocations`
+2. Orchestrator makes a single LLM call to classify intent: `discovery`, `metrics`, `qa`, or `general`
+3. For `general`: orchestrator responds directly via LLM
+4. For agent intents: orchestrator calls the sub-agent endpoint via HTTP
+5. Sub-agent uses its tools (UC API, Genie, VS) and LLM to produce a response
+6. Response returned to client
 
 ## Setup Pipeline
 
@@ -154,13 +143,13 @@ provision → grant-uc → audit → generate → register → deploy-agents →
 
 | Step | What It Does |
 |------|-------------|
-| `provision` | Creates warehouse, catalog, VS endpoint, app, Lakebase, Genie space, agent SP + secrets |
-| `grant-uc` | Grants UC, warehouse, and Genie permissions to both SPs |
+| `provision` | Creates catalog, VS endpoint, Genie space, SP OAuth secret in scope |
+| `grant-uc` | Grants UC, warehouse, and Genie permissions to SP |
 | `audit` | Walks source catalogs to collect metadata |
-| `generate` | Generates prompts, knowledge base, benchmarks, UI config |
-| `register` | Registers 3 agent MLflow models in UC (parallel) |
-| `deploy-agents` | Deploys 3 Model Serving endpoints via Agent Bricks (parallel) |
-| `grant-agent-permissions` | Grants `CAN_QUERY` on agent endpoints to app SP |
-| `deploy` | Writes Delta tables, VS indexes, Genie config, deploys app |
-| `verify` | Runs 8 benchmark questions against the live deployment |
-| `teardown` | Deletes all 9 resource types in order |
+| `generate` | Generates prompts, knowledge base, benchmarks |
+| `register` | Registers 4 agent MLflow models in UC (parallel) |
+| `deploy-agents` | Deploys 4 Model Serving endpoints via Agent Bricks (sub-agents parallel, orchestrator sequential) |
+| `grant-agent-permissions` | Grants `CAN_QUERY` on all endpoints to SP |
+| `deploy` | Writes Delta tables, VS indexes, Genie config |
+| `verify` | Runs 8 benchmark questions (run separately) |
+| `teardown` | Deletes all 6 resource types |
