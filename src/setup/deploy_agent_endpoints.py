@@ -35,6 +35,7 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     workspace_host = config.get("workspace", {}).get("host", "")
     scope = infra.get("secret_scope", infra.get("app_name", ""))
     source_catalogs = ",".join(config.get("source_catalogs", []))
+    scale_to_zero = config.get("scale_to_zero", True)
 
     # Resolve SP credentials from secret scope at deploy time
     # Tries {{secrets/...}} interpolation first; falls back to reading scope values directly
@@ -87,7 +88,7 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
                 model_name=model_name,
                 model_version=int(version),
                 endpoint_name=ep_name,
-                scale_to_zero=True,
+                scale_to_zero=scale_to_zero,
                 environment_vars=ep_env,
                 tags={"app": app_name, "agent": agent_name},
             )
@@ -98,7 +99,7 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
                     model_name=model_name,
                     model_version=int(version),
                     endpoint_name=ep_name,
-                    scale_to_zero=True,
+                    scale_to_zero=scale_to_zero,
                     environment_vars=deploy_env_vars or env_vars,
                     tags={"app": app_name, "agent": agent_name},
                 )
