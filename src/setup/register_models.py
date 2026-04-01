@@ -62,6 +62,10 @@ def register_agent_models(config: dict, w) -> dict:
     if app_dir not in sys.path:
         sys.path.insert(0, app_dir)
 
+    # Set config path so agents don't warn during MLflow validation
+    config_path = os.path.abspath(config.get("_config_path", "config/advisor_config.yaml"))
+    os.environ.setdefault("ADVISOR_CONFIG_PATH", config_path)
+
     print("=" * 60)
     print("Registering Agent Models (parallel)")
     print("=" * 60)
