@@ -1,121 +1,128 @@
-# UC Data Advisor — Teams Integration
+# UC Data Advisor — Teams Bot
 
-Microsoft Teams bot that forwards messages to the UC Data Advisor orchestrator serving endpoint. Users chat with the bot in Teams and get responses from the full agent pipeline (discovery, metrics, Q&A).
+Microsoft Teams bot that forwards messages to the UC Data Advisor orchestrator serving endpoint. Users chat with the bot in Teams and get responses from the full agent pipeline (discovery, metrics, Q&A) — no Databricks account required.
 
 ## Architecture
 
 ```
-Teams User → Azure Bot Service → This Bot (aiohttp) → Databricks Orchestrator Endpoint
-                                                              ↓
-                                                    Discovery / Metrics / Q&A agents
-                                                              ↓
-                                                        Unity Catalog
+Teams User → Azure Bot Service → Azure Web App (Python bot)
+                                        ↓
+                              Databricks SP credentials
+                                        ↓
+                              Orchestrator Serving Endpoint
+                                        ↓
+                              Discovery / Metrics / Q&A agents
+                                        ↓
+                                  Unity Catalog
 ```
+
+All users share the configured service principal's permissions. No per-user OAuth — the bot authenticates to Databricks using SP credentials.
 
 ## Prerequisites
 
-- **UC Data Advisor deployed** with the orchestrator endpoint (run `--step all` from the main project first)
-- **Azure subscription** for Azure Bot Service registration
-- **Microsoft Entra ID** app registration (single-tenant)
-- **Python 3.12+**
+- **UC Data Advisor deployed** with the orchestrator endpoint running
+- **Azure CLI** installed and authenticated (`az login`)
+- **Azure subscription** with permissions to create resources
+- **Python 3.12+** with `pyyaml` installed
 
-## Setup
-
-### 1. Deploy the UC Data Advisor
-
-Ensure the orchestrator endpoint is deployed and READY:
+## Quick Start
 
 ```bash
-# From the project root
-uv run python -m src.setup.run --config config/my_config.yaml --step all
+# 1. Create config from template
+cp teams/teams_config.example.yaml teams/teams_config.yaml
 ```
 
-Note the orchestrator endpoint name from the output (e.g., `my-app-orchestrator-agent`).
+Edit `teams/teams_config.yaml`:
 
-### 2. Azure App Registration
+```yaml
+azure:
+  subscription_id: "your-subscription-id"
+  resource_group: "your-rg"
+  location: "canadacentral"
+  owner_tag: "you@company.com"
 
-1. Go to **Azure Portal > Microsoft Entra ID > App registrations > New registration**
-2. Name: `UC Data Advisor Bot`
-3. Supported account types: **Single tenant**
-4. Register, then copy:
-   - **Application (client) ID**
-   - **Directory (tenant) ID**
-5. Go to **Certificates & secrets > New client secret** — copy the value
+bot:
+  name: "my-advisor-bot"        # Must be globally unique
 
-### 3. Azure Bot Resource
-
-1. Go to **Azure Portal > Create a resource > Azure Bot**
-2. Bot handle: `uc-data-advisor-bot`
-3. Type of App: **Single Tenant**
-4. App ID: paste the client ID from step 2
-5. After creation, go to **Channels > Microsoft Teams** and enable it
-6. Go to **Configuration** and set the messaging endpoint to:
-   ```
-   https://your-bot-host.com/api/messages
-   ```
-
-### 4. Configure & Run the Bot
-
-```bash
-cd teams
-pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with your Databricks and Azure credentials
+databricks:
+  host: "https://your-workspace.cloud.databricks.com"
+  orchestrator_endpoint: "your-app-orchestrator-agent"
+  sp_client_id: "your-sp-client-id"
+  sp_client_secret: "your-sp-secret"
 ```
 
 ```bash
-python app.py
+# 2. Deploy everything
+python teams/deploy.py --config teams/teams_config.yaml
+
+# 3. Test
+# Azure Portal → Azure Bot → Test in Web Chat
+# Or: Azure Portal → Azure Bot → Channels → Teams → Open in Teams
 ```
 
-The bot starts on port 3978.
+The deploy script creates all Azure resources automatically:
+- Resource group (if not exists)
+- App Service Plan (Linux, B1)
+- Web App (Python 3.13)
+- App Registration + Service Principal
+- Azure Bot (F0 free tier) with Teams channel
+- Environment variables
+- Bot code deployment
 
-### 5. Expose the Bot (for development)
+## Config Reference
 
-For local development, use a tunnel to expose port 3978:
+```yaml
+azure:
+  subscription_id: ""        # Azure subscription ID
+  resource_group: ""         # Resource group name
+  location: "canadacentral"  # Azure region
+  owner_tag: ""              # Owner tag (required by some Azure policies)
+
+bot:
+  name: ""                   # Azure Bot name (globally unique)
+  web_app_name: ""           # Web App name (defaults to bot name)
+  app_service_plan: ""       # Plan name (defaults to {bot_name}-plan)
+  sku: "B1"                  # App Service tier (B1 = ~$13/mo)
+  runtime: "PYTHON:3.13"     # Python runtime
+
+azure_ad:
+  app_id: ""                 # Auto-populated on first deploy
+  tenant_id: ""              # Auto-populated on first deploy
+  client_secret: ""          # Auto-populated on first deploy
+
+databricks:
+  host: ""                   # Workspace URL
+  orchestrator_endpoint: ""  # Orchestrator serving endpoint name
+  sp_client_id: ""           # SP application ID for Databricks auth
+  sp_client_secret: ""       # SP OAuth secret for Databricks auth
+```
+
+## Teardown
 
 ```bash
-# Using ngrok
-ngrok http 3978
-
-# Or using devtunnel
-devtunnel host -p 3978
+python teams/deploy.py --config teams/teams_config.yaml --step teardown
 ```
 
-Update the Azure Bot messaging endpoint to the tunnel URL + `/api/messages`.
-
-### 6. Install in Teams
-
-1. Go to **Azure Portal > Azure Bot > Channels > Microsoft Teams > Open in Teams**
-2. Or create a Teams app package and sideload it
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DATABRICKS_HOST` | Yes | Workspace URL |
-| `DATABRICKS_CLIENT_ID` | Yes* | Agent SP client ID |
-| `DATABRICKS_CLIENT_SECRET` | Yes* | Agent SP client secret |
-| `DATABRICKS_TOKEN` | Alt* | PAT (alternative to SP auth) |
-| `ORCHESTRATOR_ENDPOINT` | Yes | Orchestrator serving endpoint name |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` | Prod | Entra app client ID |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET` | Prod | Entra app client secret |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID` | Prod | Entra tenant ID |
-| `PORT` | No | Bot server port (default: 3978) |
-
-*Use either SP credentials (CLIENT_ID + CLIENT_SECRET) or TOKEN, not both.
+Deletes: Azure Bot, Web App, App Service Plan, and App Registration.
 
 ## How It Works
 
 1. User sends a message in Teams (DM or @mention in channel)
-2. Azure Bot Service forwards the message to this bot's `/api/messages` endpoint
-3. Bot strips @mention text and extracts the user's question
-4. Bot calls the Databricks orchestrator serving endpoint via the SDK
-5. Orchestrator classifies intent and routes to the appropriate agent (discovery/metrics/qa/general)
+2. Azure Bot Service forwards the message to the Web App's `/api/messages` endpoint
+3. Bot extracts the user's text
+4. Bot calls the Databricks orchestrator serving endpoint via the SDK using SP credentials
+5. Orchestrator classifies intent and routes to the appropriate agent
 6. Response is sent back to Teams
 
-## Limitations
+## Troubleshooting
 
-- **Shared identity**: All Teams users share the agent SP's Databricks permissions (no per-user UC access control)
-- **No conversation history**: Each message is independent (no multi-turn context). To add history, implement conversation state storage
-- **Cold starts**: First request after endpoint scale-to-zero may take several minutes
-- **Markdown rendering**: Teams supports basic markdown but not tables or code blocks in all contexts
+**Bot unresponsive in Web Chat**: Check Web App logs in Azure Portal → Web App → Log stream. Common issues:
+- Env var casing (`MicrosoftAppId` not `MicrosoftAppID`)
+- Missing service principal for app registration (`az ad sp create --id <app_id>`)
+- Build timeout — the first deployment can take 10-15 minutes
+
+**Empty sign-in page**: This bot doesn't use OAuth sign-in. If you see a sign-in prompt, the old OBO bot code is still deployed. Redeploy.
+
+**Cold start delays**: Agent endpoints scale to zero. First request takes up to 5 minutes. Set `scale_to_zero: false` in the advisor config to keep endpoints warm.
+
+**"Container did not start" errors**: The App Service may need more time for the initial build. Check the deployment status in Azure Portal → Web App → Deployment Center.

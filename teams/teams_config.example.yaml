@@ -1,0 +1,38 @@
+# ============================================================
+# UC Data Advisor — Teams Bot Configuration
+# ============================================================
+# Copy this file:  cp teams/teams_config.example.yaml teams/teams_config.yaml
+# Fill in the values, then run:
+#   python teams/deploy.py --config teams/teams_config.yaml
+# ============================================================
+
+# Azure subscription and resource group
+azure:
+  subscription_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  resource_group: "my-rg"
+  location: "canadacentral"           # Azure region for all resources
+  owner_tag: "you@company.com"        # Required by some Azure policies
+
+# Azure Bot and Web App
+bot:
+  name: "my-advisor-bot"              # Azure Bot resource name (must be globally unique)
+  web_app_name: "my-advisor-bot"      # Azure Web App name (becomes {name}.azurewebsites.net)
+  app_service_plan: "my-bot-plan"     # App Service Plan name
+  sku: "B1"                           # App Service pricing tier (B1 = Basic)
+  runtime: "PYTHON:3.13"              # Python runtime version
+
+# Azure AD App Registration (created automatically by deploy script)
+# Leave blank on first run — the script creates and populates these.
+# On subsequent runs, provide existing values to skip recreation.
+azure_ad:
+  app_id: ""                          # Application (client) ID
+  tenant_id: ""                       # Directory (tenant) ID
+  client_secret: ""                   # Client secret value
+
+# Databricks connection
+databricks:
+  host: "https://my-workspace.cloud.databricks.com"
+  orchestrator_endpoint: "my-app-orchestrator-agent"
+  # SP credentials for calling the orchestrator endpoint
+  sp_client_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  sp_client_secret: "dosexxxxxxxxxxxxxxxxxx"
