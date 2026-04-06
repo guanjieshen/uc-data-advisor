@@ -401,14 +401,6 @@ def _build_table_description(tbl: dict) -> list[str]:
         col_descs.append("".join(parts))
     desc.append("Columns:\n" + "\n".join(col_descs))
 
-    # Sample data
-    samples = tbl.get("sample_data", [])
-    if samples:
-        desc.append(f"Sample data ({len(samples)} rows):")
-        for i, row in enumerate(samples[:3]):
-            row_str = ", ".join(f"{k}={v}" for k, v in list(row.items())[:8])
-            desc.append(f"  Row {i+1}: {row_str}")
-
     return desc
 
 

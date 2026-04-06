@@ -132,20 +132,9 @@ def audit(config: dict, w) -> dict:
     """)
     print(f"{len(privilege_rows)} grants")
 
-    # 9. Sample data (first 5 rows per table)
-    print("  Sampling data...", end=" ", flush=True)
     sample_data = {}
-    for tbl in table_rows:
-        full_name = f"{tbl['table_catalog']}.{tbl['table_schema']}.{tbl['table_name']}"
-        try:
-            rows = _query(sp_client, warehouse_id, f"SELECT * FROM {full_name} LIMIT 5")
-            if rows:
-                sample_data[full_name] = rows
-        except Exception:
-            pass
-    print(f"{len(sample_data)} tables sampled")
 
-    # 10. Volumes
+    # 9. Volumes
     print("  Querying volumes...", end=" ", flush=True)
     volume_rows = _query_safe(sp_client, warehouse_id, f"""
         SELECT catalog_name, schema_name, volume_name, volume_type, comment,
