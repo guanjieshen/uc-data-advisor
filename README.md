@@ -7,31 +7,31 @@ A multi-agent system that enables natural language dataset discovery over Unity 
 ```mermaid
 flowchart TB
     subgraph SERVING["MODEL SERVING ENDPOINTS"]
-        ORCH["Orchestrator Agent<br/><i>LLM Intent Classifier + Router</i>"]
-        DA["Discovery Agent<br/><i>Dataset Search · Schema · Columns</i>"]
-        DM["Metrics Agent<br/><i>NL-to-SQL via Genie</i>"]
-        QA["Q&A Agent<br/><i>RAG over Knowledge Base</i>"]
+        ORCH[Orchestrator Agent]
+        DA[Discovery Agent]
+        DM[Metrics Agent]
+        QA[Q&A Agent]
     end
 
     subgraph LLM["LLM"]
-        CLAUDE["Foundation Model<br/><i>Claude Opus 4.6</i>"]
+        CLAUDE[Foundation Model]
     end
 
     subgraph TOOLS["TOOLS & RETRIEVAL"]
-        UC_API["UC API Tools<br/><i>List · Describe · Search</i>"]
-        VS1["Vector Index<br/><i>UC Metadata</i>"]
-        GENIE["Genie Space<br/><i>NL to SQL</i>"]
-        VS2["Vector Index<br/><i>Knowledge Base</i>"]
+        UC_API[UC API Tools]
+        VS1[Vector Index - Metadata]
+        GENIE[Genie Space]
+        VS2[Vector Index - Knowledge]
     end
 
     subgraph DATA["DATA LAYER"]
-        UCat[("Unity Catalog<br/><i>Source Catalogs</i>")]
+        UCat[(Unity Catalog)]
     end
 
     ORCH -->|discovery| DA
     ORCH -->|metrics| DM
     ORCH -->|Q&A| QA
-    ORCH -->|classify / general| CLAUDE
+    ORCH -->|classify| CLAUDE
 
     DA -->|LLM| CLAUDE
     DM -->|LLM| CLAUDE
@@ -44,16 +44,6 @@ flowchart TB
 
     GENIE --> UCat
     UC_API --> UCat
-
-    classDef serving fill:#fff3e0,stroke:#ff9800
-    classDef llm fill:#fce4ec,stroke:#e91e63
-    classDef tools fill:#f3e5f5,stroke:#9c27b0
-    classDef data fill:#e8f5e9,stroke:#4caf50
-
-    class ORCH,DA,DM,QA serving
-    class CLAUDE llm
-    class UC_API,VS1,GENIE,VS2 tools
-    class UCat data
 ```
 
 ## Components

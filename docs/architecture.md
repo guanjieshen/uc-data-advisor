@@ -9,36 +9,36 @@ The UC Data Advisor is a multi-agent system for natural language dataset discove
 ```mermaid
 flowchart TB
     subgraph CLIENTS["CLIENTS"]
-        TEAMS["Microsoft Teams Bot"]
-        NB["Databricks Notebook"]
-        HTTP["Any HTTP Client"]
+        TEAMS[Microsoft Teams Bot]
+        NB[Databricks Notebook]
+        HTTP[Any HTTP Client]
     end
 
-    subgraph SERVING["MODEL SERVING ENDPOINTS (Agent Bricks)"]
-        ORCH["Orchestrator Agent<br/><i>LLM Intent Classifier</i><br/><i>Routes to Sub-Agents</i>"]
-        DA["Discovery Agent<br/><i>Dataset Existence · Schema</i><br/><b>Tables · Columns · Descriptions</b>"]
-        DM["Metrics Agent<br/><i>Compute Metrics on</i><br/><b>Unity Catalog Assets</b>"]
-        QA["Q&A Agent<br/><i>RAG over Knowledge Base</i><br/><b>FAQ · Governance · Docs</b>"]
+    subgraph SERVING["MODEL SERVING ENDPOINTS"]
+        ORCH[Orchestrator Agent]
+        DA[Discovery Agent]
+        DM[Metrics Agent]
+        QA[Q&A Agent]
     end
 
     subgraph LLM["LLM"]
-        CLAUDE["Foundation Model<br/><i>Claude Opus 4.6 (pay-per-token)</i>"]
+        CLAUDE[Foundation Model]
     end
 
     subgraph TOOLS["TOOLS & RETRIEVAL"]
-        UC_API["UC API Tools<br/><i>List · Describe · Search</i><br/><b>Scoped to source_catalogs</b>"]
-        VS1["Vector Search Index<br/><i>UC Metadata</i><br/><b>Semantic Table Discovery</b>"]
-        GENIE["Genie Space<br/><i>NL to SQL</i><br/><b>Metrics Queries</b>"]
-        VS2["Vector Search Index<br/><i>Knowledge Base</i><br/><b>FAQ Retrieval</b>"]
+        UC_API[UC API Tools]
+        VS1[Vector Index - Metadata]
+        GENIE[Genie Space]
+        VS2[Vector Index - Knowledge]
     end
 
     subgraph DATA["DATA LAYER"]
-        UCat[("Unity Catalog<br/><b>Source Catalogs</b><br/><i>Catalogs · Schemas · Tables · Columns</i>")]
+        UCat[(Unity Catalog)]
     end
 
     subgraph AUTH["AUTH"]
-        SP["Service Principal<br/><i>User-provided · OAuth M2M</i>"]
-        SCOPE["Secret Scope<br/><i>Client ID + Secret</i>"]
+        SP[Service Principal]
+        SCOPE[Secret Scope]
         SP -.-> SCOPE
     end
 
@@ -46,7 +46,7 @@ flowchart TB
     ORCH -->|discovery| DA
     ORCH -->|metrics| DM
     ORCH -->|Q&A| QA
-    ORCH -->|classify / general| CLAUDE
+    ORCH -->|classify| CLAUDE
 
     DA -->|LLM| CLAUDE
     DM -->|LLM| CLAUDE
