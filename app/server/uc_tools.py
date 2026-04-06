@@ -101,6 +101,8 @@ def execute_tool(name: str, args: dict) -> dict | list:
         "get_table_lineage": _get_table_lineage,
         "get_table_constraints": _get_table_constraints,
         "get_table_privileges": _get_table_privileges,
+        "list_volumes": _list_volumes,
+        "get_volume_details": _get_volume_details,
     }
     handler = handlers.get(name)
     if not handler:
@@ -330,3 +332,67 @@ def _get_table_privileges(full_name: str) -> list[dict]:
         FROM system.information_schema.table_privileges
         WHERE table_catalog = '{catalog}' AND table_schema = '{schema}' AND table_name = '{table}'
     """) or [{"info": "No privilege data available"}]
+
+
+# ---------------------------------------------------------------------------
+# Volume tools
+# ---------------------------------------------------------------------------
+
+def _list_volumes(catalog_name: str, schema_name: str) -> list[dict]:
+    err = _check_catalog(catalog_name)
+    if err:
+        return [{"error": err}]
+    return _query(f"""
+        SELECT volume_name, volume_type, comment, storage_location, created, created_by
+        FROM system.information_schema.volumes
+        WHERE catalog_name = '{catalog_name}' AND schema_name = '{schema_name}'
+        ORDER BY volume_name
+    """) or [{"info": "No volumes found"}]
+
+
+def _get_volume_details(full_name: str) -> dict:
+    """Get volume metadata and list files."""
+    parts = full_name.split(".")
+    if len(parts) != 3:
+        return {"error": "Expected catalog.schema.volume format"}
+    catalog, schema, volume = parts
+    err = _check_catalog(catalog)
+    if err:
+        return {"error": err}
+
+    # Volume metadata
+    vol_rows = _query(f"""
+        SELECT volume_name, volume_type, comment, storage_location, created, last_altered, created_by
+        FROM system.information_schema.volumes
+        WHERE catalog_name = '{catalog}' AND schema_name = '{schema}' AND volume_name = '{volume}'
+    """)
+    if not vol_rows:
+        return {"error": f"Volume not found: {full_name}"}
+
+    v = vol_rows[0]
+    result = {
+        "name": volume,
+        "full_name": full_name,
+        "volume_type": v.get("volume_type"),
+        "comment": v.get("comment") or "",
+        "storage_location": v.get("storage_location"),
+        "owner": v.get("created_by"),
+        "created": v.get("created"),
+        "files": [],
+    }
+
+    # List files via Files API
+    try:
+        client = get_workspace_client()
+        file_list = client.files.list_directory_contents(f"/Volumes/{catalog}/{schema}/{volume}")
+        for f in file_list:
+            result["files"].append({
+                "name": f.name,
+                "path": f.path,
+                "size": getattr(f, "file_size", None),
+                "is_directory": getattr(f, "is_directory", False),
+            })
+    except Exception as e:
+        result["files_error"] = str(e)[:200]
+
+    return result

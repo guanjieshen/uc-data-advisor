@@ -130,11 +130,34 @@ UC_TOOLS = [
             "parameters": FULL_NAME_PARAM,
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_volumes",
+            "description": "List Unity Catalog volumes (file storage) in a schema. Volumes contain non-tabular data like PDFs, CSVs, images, and other documents.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "catalog_name": {"type": "string", "description": "Catalog name"},
+                    "schema_name": {"type": "string", "description": "Schema name"},
+                },
+                "required": ["catalog_name", "schema_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_volume_details",
+            "description": "Get volume metadata and list files inside it. Shows file names, sizes, and types. Use catalog.schema.volume format.",
+            "parameters": FULL_NAME_PARAM,
+        },
+    },
 ]
 
 DEFAULT_DISCOVERY_PROMPT = """You are the Data Discovery Agent for UC Data Advisor.
 
-You help users find datasets, understand table structures, and navigate Unity Catalog. You query system tables for rich metadata.
+You help users find datasets, understand table structures, and navigate Unity Catalog. You query system tables for rich metadata including non-tabular data in volumes.
 
 Key behaviors:
 - For conceptual queries (e.g., "data about sales"), prefer semantic_search_tables
@@ -144,7 +167,8 @@ Key behaviors:
 - Use get_table_tags / get_column_tags for governance metadata
 - Use get_table_constraints for PK/FK relationships
 - Use get_table_privileges to show who has access
-- Always mention the fully qualified table name (catalog.schema.table)
+- Use list_volumes and get_volume_details to find non-tabular data (PDFs, CSVs, documents, images)
+- Always mention the fully qualified name (catalog.schema.table or catalog.schema.volume)
 - When describing tables, highlight important columns and what the table is used for"""
 
 

@@ -133,6 +133,49 @@ def _deploy_metadata_table(config, w, warehouse_id):
             "description_text": description_text,
         })
 
+    # Add volume docs to the same metadata table
+    for vol in audit.get("volumes", []):
+        desc_parts = [
+            f"Volume: {vol['full_name']}",
+            f"Catalog: {vol['catalog_name']}",
+            f"Schema: {vol['catalog_name']}.{vol['schema_name']}",
+            f"Type: {vol.get('volume_type', 'MANAGED')}",
+        ]
+        if vol.get("comment"):
+            desc_parts.append(f"Description: {vol['comment']}")
+        if vol.get("storage_location"):
+            desc_parts.append(f"Location: {vol['storage_location']}")
+
+        files = vol.get("files", [])
+        if files:
+            file_names = [f.get("name", "") for f in files if not f.get("is_directory")]
+            desc_parts.append(f"Files ({len(file_names)}): " + ", ".join(file_names[:20]))
+
+            # Include content previews if indexed
+            for f in files:
+                preview = f.get("content_preview", "")
+                if preview and len(preview) > 20:
+                    desc_parts.append(f"Content of {f['name']}: {preview[:500]}")
+
+        doc_id = hashlib.md5(vol["full_name"].encode()).hexdigest()[:16]
+        rows.append({
+            "doc_id": doc_id,
+            "catalog_name": vol["catalog_name"],
+            "schema_name": vol["schema_name"],
+            "table_name": vol["name"],
+            "full_table_name": vol["full_name"],
+            "table_comment": vol.get("comment", ""),
+            "table_type": "VOLUME",
+            "table_owner": vol.get("owner", ""),
+            "data_source_format": vol.get("volume_type", ""),
+            "created_at": str(vol.get("created", "")),
+            "last_altered": "",
+            "columns_json": json.dumps([{"name": f.get("name", ""), "type": "file", "comment": ""} for f in files]),
+            "tags_json": "[]",
+            "constraints_json": "[]",
+            "description_text": "\n".join(desc_parts),
+        })
+
     # Batch insert
     BATCH = 20
     for i in range(0, len(rows), BATCH):

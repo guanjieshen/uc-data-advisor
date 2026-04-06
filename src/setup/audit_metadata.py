@@ -112,6 +112,27 @@ def audit(config: dict, w) -> dict:
     """)
     print(f"{len(constraint_rows)} found")
 
+    # 7. Volumes
+    print("  Querying volumes...", end=" ", flush=True)
+    volume_rows = _query_safe(sp_client, warehouse_id, f"""
+        SELECT catalog_name, schema_name, volume_name, volume_type, comment,
+               storage_location, created, last_altered, created_by
+        FROM system.information_schema.volumes
+        WHERE catalog_name IN ({catalog_filter})
+          AND schema_name NOT IN ('information_schema', 'pg_catalog', '__db_system')
+    """)
+    volume_rows = [r for r in volume_rows if (r.get("catalog_name"), r.get("schema_name")) in valid_schemas]
+    print(f"{len(volume_rows)} found")
+
+    # 8. Volume file listing (best-effort via Files API)
+    volumes = _build_volumes(volume_rows, sp_client)
+
+    # 9. Volume content indexing (if enabled)
+    if config.get("enable_volume_indexing", False) and volumes:
+        print("  Indexing volume contents...", end=" ", flush=True)
+        _index_volume_contents(volumes, sp_client)
+        print(f"{sum(len(v.get('files', [])) for v in volumes)} files indexed")
+
     # Build structured output
     catalogs, schemas, tables = _build_audit_result(
         cat_rows, schema_rows, table_rows, col_rows,
@@ -126,8 +147,10 @@ def audit(config: dict, w) -> dict:
         "catalogs": catalogs,
         "schemas": schemas,
         "tables": tables,
+        "volumes": volumes,
         "total_tables": len(tables),
         "total_columns": total_cols,
+        "total_volumes": len(volumes),
         "tables_with_comments": tables_with_comments,
         "columns_with_comments": cols_with_comments,
         "description_coverage_pct": round(
@@ -136,7 +159,7 @@ def audit(config: dict, w) -> dict:
     }
 
     print()
-    print(f"  Total: {len(catalogs)} catalogs, {len(schemas)} schemas, {len(tables)} tables, {total_cols} columns")
+    print(f"  Total: {len(catalogs)} catalogs, {len(schemas)} schemas, {len(tables)} tables, {len(volumes)} volumes, {total_cols} columns")
     print(f"  Description coverage: {audit_result['description_coverage_pct']}%")
 
     return audit_result
@@ -311,3 +334,91 @@ def _build_audit_result(cat_rows, schema_rows, table_rows, col_rows,
         ])
 
     return catalogs, schemas, tables
+
+
+def _build_volumes(volume_rows: list[dict], sp_client) -> list[dict]:
+    """Build volume records with file listings."""
+    volumes = []
+    for r in volume_rows:
+        full_name = f"{r['catalog_name']}.{r['schema_name']}.{r['volume_name']}"
+        vol = {
+            "catalog_name": r.get("catalog_name", ""),
+            "schema_name": r.get("schema_name", ""),
+            "name": r.get("volume_name", ""),
+            "full_name": full_name,
+            "volume_type": r.get("volume_type", ""),
+            "comment": r.get("comment") or "",
+            "storage_location": r.get("storage_location") or "",
+            "owner": r.get("created_by") or "",
+            "created": r.get("created") or "",
+            "files": [],
+        }
+
+        # List files in volume via Files API (best-effort)
+        try:
+            file_list = sp_client.files.list_directory_contents(
+                f"/Volumes/{r['catalog_name']}/{r['schema_name']}/{r['volume_name']}"
+            )
+            for f in file_list:
+                vol["files"].append({
+                    "name": f.name,
+                    "path": f.path,
+                    "size": getattr(f, "file_size", None),
+                    "is_directory": getattr(f, "is_directory", False),
+                    "last_modified": str(getattr(f, "last_modified", "")),
+                })
+        except Exception as e:
+            logger.info(f"Could not list files in {full_name}: {e}")
+
+        volumes.append(vol)
+    return volumes
+
+
+def _index_volume_contents(volumes: list[dict], sp_client) -> None:
+    """Extract text content from documents in volumes for indexing."""
+    for vol in volumes:
+        for f in vol.get("files", []):
+            if f.get("is_directory") or not f.get("path"):
+                continue
+
+            name = f.get("name", "").lower()
+            content = ""
+
+            try:
+                if name.endswith(".csv"):
+                    # Read first few lines as preview
+                    resp = sp_client.files.download(f["path"])
+                    raw = resp.contents.read(4096).decode("utf-8", errors="replace")
+                    content = raw[:2000]
+
+                elif name.endswith(".txt") or name.endswith(".md"):
+                    resp = sp_client.files.download(f["path"])
+                    content = resp.contents.read(8192).decode("utf-8", errors="replace")[:4000]
+
+                elif name.endswith(".json"):
+                    resp = sp_client.files.download(f["path"])
+                    content = resp.contents.read(4096).decode("utf-8", errors="replace")[:2000]
+
+                elif name.endswith(".pdf"):
+                    # PDF text extraction — requires the file to be text-based
+                    try:
+                        import io
+                        resp = sp_client.files.download(f["path"])
+                        pdf_bytes = resp.contents.read(1_000_000)  # 1MB max
+                        try:
+                            from PyPDF2 import PdfReader
+                            reader = PdfReader(io.BytesIO(pdf_bytes))
+                            pages = []
+                            for page in reader.pages[:10]:  # First 10 pages
+                                pages.append(page.extract_text() or "")
+                            content = "\n".join(pages)[:4000]
+                        except ImportError:
+                            # PyPDF2 not available — store filename only
+                            content = f"PDF document: {name}"
+                    except Exception:
+                        content = f"PDF document: {name}"
+
+            except Exception as e:
+                logger.info(f"Could not read {f['path']}: {e}")
+
+            f["content_preview"] = content

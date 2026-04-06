@@ -37,6 +37,7 @@ service_principal: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 # include_schemas: []          # Restrict to specific schemas
 # exclude_schemas: [staging]   # Skip these schemas
 enable_metric_views: false    # Generate metric views and materialized tables
+enable_volume_indexing: false # Extract text from volume documents (PDFs, CSVs) for semantic search (default: false)
 scale_to_zero: true          # Scale agent endpoints to zero when idle (default: true)
 enable_ai_gateway_guardrails: false  # Enable input safety guardrails on agent endpoints
 # rate_limits:                       # AI Gateway rate limits on agent endpoints
