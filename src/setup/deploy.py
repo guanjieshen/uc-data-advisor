@@ -81,38 +81,11 @@ def _deploy_metadata_table(config, w, warehouse_id):
     # Insert rows in batches
     rows = []
     for tbl in audit.get("tables", []):
-        col_descs = []
-        for c in tbl.get("columns", []):
-            desc = f"  - {c['name']} ({c['type']})"
-            if c.get("comment"):
-                desc += f": {c['comment']}"
-            col_descs.append(desc)
-
-        # Build enriched description for VS embedding
-        desc_parts = [
-            f"Table: {tbl['full_name']}",
-            f"Catalog: {tbl['catalog_name']}",
-            f"Schema: {tbl['catalog_name']}.{tbl['schema_name']}",
-        ]
-        if tbl.get("comment"):
-            desc_parts.append(f"Description: {tbl['comment']}")
-        if tbl.get("data_source_format"):
-            desc_parts.append(f"Format: {tbl['data_source_format']}")
-        if tbl.get("owner"):
-            desc_parts.append(f"Owner: {tbl['owner']}")
+        desc_parts = _build_table_description(tbl)
+        description_text = "\n".join(desc_parts)
 
         tags = tbl.get("tags", [])
-        if tags:
-            tag_str = ", ".join(f"{t['tag_name']}={t['tag_value']}" for t in tags)
-            desc_parts.append(f"Tags: {tag_str}")
-
         constraints = tbl.get("constraints", [])
-        if constraints:
-            for con in constraints:
-                desc_parts.append(f"{con['constraint_type']}: {', '.join(con.get('columns', []))}")
-
-        desc_parts.append("Columns:\n" + "\n".join(col_descs))
-        description_text = "\n".join(desc_parts)
 
         doc_id = hashlib.md5(tbl["full_name"].encode()).hexdigest()[:16]
         rows.append({
@@ -366,6 +339,77 @@ def _create_vs_index(w, index_name, endpoint_name, source_table, primary_key, em
             print("already exists")
         else:
             print(f"FAILED: {e}")
+
+
+def _build_table_description(tbl: dict) -> list[str]:
+    """Build comprehensive description_text for VS embedding from all metadata."""
+    desc = [
+        f"Table: {tbl['full_name']}",
+        f"Catalog: {tbl['catalog_name']}",
+        f"Schema: {tbl['catalog_name']}.{tbl['schema_name']}",
+        f"Type: {tbl.get('table_type', 'MANAGED')}",
+    ]
+    if tbl.get("comment"):
+        desc.append(f"Description: {tbl['comment']}")
+    if tbl.get("data_source_format"):
+        desc.append(f"Format: {tbl['data_source_format']}")
+    if tbl.get("owner"):
+        desc.append(f"Owner: {tbl['owner']}")
+    if tbl.get("created"):
+        desc.append(f"Created: {tbl['created']}")
+    if tbl.get("last_altered"):
+        desc.append(f"Last modified: {tbl['last_altered']}")
+
+    # Tags
+    tags = tbl.get("tags", [])
+    if tags:
+        desc.append(f"Table tags: " + ", ".join(f"{t['tag_name']}={t['tag_value']}" for t in tags))
+
+    # Constraints
+    for con in tbl.get("constraints", []):
+        desc.append(f"{con['constraint_type']}: {', '.join(con.get('columns', []))}")
+
+    # Lineage
+    upstream = tbl.get("upstream", [])
+    if upstream:
+        desc.append(f"Upstream (feeds into this table): {', '.join(upstream[:10])}")
+    downstream = tbl.get("downstream", [])
+    if downstream:
+        desc.append(f"Downstream (consumes this table): {', '.join(downstream[:10])}")
+
+    # Privileges
+    privileges = tbl.get("privileges", [])
+    if privileges:
+        priv_strs = [f"{p['grantee']}:{p['privilege_type']}" for p in privileges[:20]]
+        desc.append(f"Access: {', '.join(priv_strs)}")
+
+    # Columns with full detail
+    col_descs = []
+    for c in tbl.get("columns", []):
+        parts = [f"  - {c['name']} ({c['type']})"]
+        if c.get("comment"):
+            parts.append(f": {c['comment']}")
+        if c.get("column_default"):
+            parts.append(f" [default: {c['column_default']}]")
+        if c.get("numeric_precision"):
+            parts.append(f" [precision: {c['numeric_precision']}]")
+        if c.get("character_maximum_length") and str(c["character_maximum_length"]) != "0":
+            parts.append(f" [max_len: {c['character_maximum_length']}]")
+        col_tags = c.get("tags", [])
+        if col_tags:
+            parts.append(f" [tags: {', '.join(t['tag_name'] + '=' + t['tag_value'] for t in col_tags)}]")
+        col_descs.append("".join(parts))
+    desc.append("Columns:\n" + "\n".join(col_descs))
+
+    # Sample data
+    samples = tbl.get("sample_data", [])
+    if samples:
+        desc.append(f"Sample data ({len(samples)} rows):")
+        for i, row in enumerate(samples[:3]):
+            row_str = ", ".join(f"{k}={v}" for k, v in list(row.items())[:8])
+            desc.append(f"  Row {i+1}: {row_str}")
+
+    return desc
 
 
 def _run_sql(w, warehouse_id, statement, timeout=60):

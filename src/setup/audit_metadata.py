@@ -112,7 +112,40 @@ def audit(config: dict, w) -> dict:
     """)
     print(f"{len(constraint_rows)} found")
 
-    # 7. Volumes
+    # 7. Lineage (best-effort — requires system.access enabled)
+    print("  Querying lineage...", end=" ", flush=True)
+    lineage_rows = _query_safe(sp_client, warehouse_id, f"""
+        SELECT DISTINCT source_table_full_name, target_table_full_name
+        FROM system.access.table_lineage
+        WHERE (source_table_catalog IN ({catalog_filter}) OR target_table_catalog IN ({catalog_filter}))
+          AND source_table_full_name IS NOT NULL
+          AND target_table_full_name IS NOT NULL
+    """)
+    print(f"{len(lineage_rows)} relationships")
+
+    # 8. Privileges (best-effort)
+    print("  Querying privileges...", end=" ", flush=True)
+    privilege_rows = _query_safe(sp_client, warehouse_id, f"""
+        SELECT table_catalog, table_schema, table_name, grantee, privilege_type
+        FROM system.information_schema.table_privileges
+        WHERE table_catalog IN ({catalog_filter})
+    """)
+    print(f"{len(privilege_rows)} grants")
+
+    # 9. Sample data (first 5 rows per table)
+    print("  Sampling data...", end=" ", flush=True)
+    sample_data = {}
+    for tbl in table_rows:
+        full_name = f"{tbl['table_catalog']}.{tbl['table_schema']}.{tbl['table_name']}"
+        try:
+            rows = _query(sp_client, warehouse_id, f"SELECT * FROM {full_name} LIMIT 5")
+            if rows:
+                sample_data[full_name] = rows
+        except Exception:
+            pass
+    print(f"{len(sample_data)} tables sampled")
+
+    # 10. Volumes
     print("  Querying volumes...", end=" ", flush=True)
     volume_rows = _query_safe(sp_client, warehouse_id, f"""
         SELECT catalog_name, schema_name, volume_name, volume_type, comment,
@@ -137,6 +170,7 @@ def audit(config: dict, w) -> dict:
     catalogs, schemas, tables = _build_audit_result(
         cat_rows, schema_rows, table_rows, col_rows,
         table_tag_rows, col_tag_rows, constraint_rows,
+        lineage_rows, privilege_rows, sample_data,
     )
 
     total_cols = sum(len(t["columns"]) for t in tables)
@@ -220,8 +254,12 @@ def _query_safe(client, warehouse_id: str, sql: str) -> list[dict]:
 
 
 def _build_audit_result(cat_rows, schema_rows, table_rows, col_rows,
-                        table_tag_rows, col_tag_rows, constraint_rows):
+                        table_tag_rows, col_tag_rows, constraint_rows,
+                        lineage_rows=None, privilege_rows=None, sample_data=None):
     """Assemble structured audit result from raw query rows."""
+    lineage_rows = lineage_rows or []
+    privilege_rows = privilege_rows or []
+    sample_data = sample_data or {}
 
     # Index columns by table
     col_index = {}
@@ -240,6 +278,25 @@ def _build_audit_result(cat_rows, schema_rows, table_rows, col_rows,
     for ct in col_tag_rows:
         key = (ct["catalog_name"], ct["schema_name"], ct["table_name"], ct["column_name"])
         col_tag_index.setdefault(key, []).append({"tag_name": ct["tag_name"], "tag_value": ct["tag_value"]})
+
+    # Index lineage
+    lineage_upstream = {}  # target -> [sources]
+    lineage_downstream = {}  # source -> [targets]
+    for lr in lineage_rows:
+        src = lr.get("source_table_full_name", "")
+        tgt = lr.get("target_table_full_name", "")
+        if src and tgt:
+            lineage_upstream.setdefault(tgt, set()).add(src)
+            lineage_downstream.setdefault(src, set()).add(tgt)
+
+    # Index privileges
+    privilege_index = {}
+    for pr in privilege_rows:
+        key = (pr.get("table_catalog", ""), pr.get("table_schema", ""), pr.get("table_name", ""))
+        privilege_index.setdefault(key, []).append({
+            "grantee": pr.get("grantee", ""),
+            "privilege_type": pr.get("privilege_type", ""),
+        })
 
     # Index constraints
     constraint_index = {}
@@ -306,6 +363,16 @@ def _build_audit_result(cat_rows, schema_rows, table_rows, col_rows,
         # Constraints for this table
         constraints = list(constraint_index.get(key, {}).values())
 
+        # Lineage for this table
+        upstream = sorted(lineage_upstream.get(full_name, set()))
+        downstream = sorted(lineage_downstream.get(full_name, set()))
+
+        # Privileges for this table
+        privileges = privilege_index.get(key, [])
+
+        # Sample data
+        samples = sample_data.get(full_name, [])
+
         table_record = {
             "catalog_name": r["table_catalog"],
             "schema_name": r["table_schema"],
@@ -320,6 +387,10 @@ def _build_audit_result(cat_rows, schema_rows, table_rows, col_rows,
             "columns": columns,
             "tags": tag_index.get(key, []),
             "constraints": constraints,
+            "upstream": upstream,
+            "downstream": downstream,
+            "privileges": privileges,
+            "sample_data": samples[:5],
         }
         tables.append(table_record)
 
