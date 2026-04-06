@@ -61,6 +61,7 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
         "VS_INDEX_METADATA": infra.get("vs_index_metadata", ""),
         "VS_INDEX_KNOWLEDGE": infra.get("vs_index_knowledge", ""),
         "SOURCE_CATALOGS": source_catalogs,
+        "WAREHOUSE_ID": infra.get("warehouse_id", ""),
     }
     env_vars = {k: v for k, v in env_vars.items() if v}
 

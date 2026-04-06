@@ -63,14 +63,17 @@ def _deploy_metadata_table(config, w, warehouse_id):
 
     print(f"  [metadata] Writing {len(audit.get('tables', []))} tables to {table}...")
 
-    # Create table
+    # Create table with enriched columns
     _run_sql(w, warehouse_id, f"DROP TABLE IF EXISTS {table}")
     _run_sql(w, warehouse_id, f"""
         CREATE TABLE {table} (
             doc_id STRING NOT NULL,
             catalog_name STRING, schema_name STRING, table_name STRING,
             full_table_name STRING, table_comment STRING, table_type STRING,
-            columns_json STRING, description_text STRING
+            table_owner STRING, data_source_format STRING,
+            created_at STRING, last_altered STRING,
+            columns_json STRING, tags_json STRING, constraints_json STRING,
+            description_text STRING
         ) USING DELTA
         TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
     """)
@@ -85,13 +88,31 @@ def _deploy_metadata_table(config, w, warehouse_id):
                 desc += f": {c['comment']}"
             col_descs.append(desc)
 
-        description_text = "\n".join([
+        # Build enriched description for VS embedding
+        desc_parts = [
             f"Table: {tbl['full_name']}",
             f"Catalog: {tbl['catalog_name']}",
             f"Schema: {tbl['catalog_name']}.{tbl['schema_name']}",
-            f"Description: {tbl.get('comment', '')}",
-            "Columns:\n" + "\n".join(col_descs),
-        ])
+        ]
+        if tbl.get("comment"):
+            desc_parts.append(f"Description: {tbl['comment']}")
+        if tbl.get("data_source_format"):
+            desc_parts.append(f"Format: {tbl['data_source_format']}")
+        if tbl.get("owner"):
+            desc_parts.append(f"Owner: {tbl['owner']}")
+
+        tags = tbl.get("tags", [])
+        if tags:
+            tag_str = ", ".join(f"{t['tag_name']}={t['tag_value']}" for t in tags)
+            desc_parts.append(f"Tags: {tag_str}")
+
+        constraints = tbl.get("constraints", [])
+        if constraints:
+            for con in constraints:
+                desc_parts.append(f"{con['constraint_type']}: {', '.join(con.get('columns', []))}")
+
+        desc_parts.append("Columns:\n" + "\n".join(col_descs))
+        description_text = "\n".join(desc_parts)
 
         doc_id = hashlib.md5(tbl["full_name"].encode()).hexdigest()[:16]
         rows.append({
@@ -102,7 +123,13 @@ def _deploy_metadata_table(config, w, warehouse_id):
             "full_table_name": tbl["full_name"],
             "table_comment": tbl.get("comment", ""),
             "table_type": tbl.get("table_type", ""),
+            "table_owner": tbl.get("owner", ""),
+            "data_source_format": tbl.get("data_source_format", ""),
+            "created_at": str(tbl.get("created", "")),
+            "last_altered": str(tbl.get("last_altered", "")),
             "columns_json": json.dumps([{"name": c["name"], "type": c["type"], "comment": c.get("comment", "")} for c in tbl.get("columns", [])]),
+            "tags_json": json.dumps(tags),
+            "constraints_json": json.dumps(constraints),
             "description_text": description_text,
         })
 
@@ -113,7 +140,10 @@ def _deploy_metadata_table(config, w, warehouse_id):
         values = ",\n".join(
             f"('{_esc(r['doc_id'])}', '{_esc(r['catalog_name'])}', '{_esc(r['schema_name'])}', "
             f"'{_esc(r['table_name'])}', '{_esc(r['full_table_name'])}', '{_esc(r['table_comment'])}', "
-            f"'{_esc(r['table_type'])}', '{_esc(r['columns_json'])}', '{_esc(r['description_text'])}')"
+            f"'{_esc(r['table_type'])}', '{_esc(r['table_owner'])}', '{_esc(r['data_source_format'])}', "
+            f"'{_esc(r['created_at'])}', '{_esc(r['last_altered'])}', "
+            f"'{_esc(r['columns_json'])}', '{_esc(r['tags_json'])}', '{_esc(r['constraints_json'])}', "
+            f"'{_esc(r['description_text'])}')"
             for r in batch
         )
         _run_sql(w, warehouse_id, f"INSERT INTO {table} VALUES\n{values}")

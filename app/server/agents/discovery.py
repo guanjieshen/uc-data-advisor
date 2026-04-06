@@ -1,16 +1,27 @@
-"""Data Discovery Agent — browses Unity Catalog metadata."""
+"""Data Discovery Agent — browses Unity Catalog metadata via system tables."""
 
 from .base import ResponsesBaseAgent
 from ..uc_tools import execute_tool as uc_execute_tool
 from ..tools.vector_search import semantic_search_tables
 from ..advisor_config import get_prompts
 
+FULL_NAME_PARAM = {
+    "type": "object",
+    "properties": {
+        "full_name": {
+            "type": "string",
+            "description": "Fully qualified table name: catalog.schema.table",
+        }
+    },
+    "required": ["full_name"],
+}
+
 UC_TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "list_catalogs",
-            "description": "List all Unity Catalog catalogs accessible in the workspace. Returns catalog names and descriptions. Use this to understand what data domains are available.",
+            "description": "List all Unity Catalog catalogs. Returns names, owners, descriptions, and creation dates.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -18,14 +29,11 @@ UC_TOOLS = [
         "type": "function",
         "function": {
             "name": "list_schemas",
-            "description": "List all schemas within a specific catalog. Returns schema names and descriptions. Use this to explore the data organization within a catalog.",
+            "description": "List schemas in a catalog with owners and descriptions.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "catalog_name": {
-                        "type": "string",
-                        "description": "Name of the catalog to list schemas from",
-                    }
+                    "catalog_name": {"type": "string", "description": "Catalog name"}
                 },
                 "required": ["catalog_name"],
             },
@@ -35,18 +43,12 @@ UC_TOOLS = [
         "type": "function",
         "function": {
             "name": "list_tables",
-            "description": "List all tables within a specific schema. Returns table names, types, and descriptions. Use this to find specific datasets.",
+            "description": "List tables in a schema with types, owners, formats, and timestamps.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "catalog_name": {
-                        "type": "string",
-                        "description": "Name of the catalog",
-                    },
-                    "schema_name": {
-                        "type": "string",
-                        "description": "Name of the schema to list tables from",
-                    },
+                    "catalog_name": {"type": "string", "description": "Catalog name"},
+                    "schema_name": {"type": "string", "description": "Schema name"},
                 },
                 "required": ["catalog_name", "schema_name"],
             },
@@ -56,31 +58,19 @@ UC_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_table_details",
-            "description": "Get detailed metadata for a specific table including all columns, their types, and descriptions. Use this when a user asks about a specific dataset's structure.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "full_name": {
-                        "type": "string",
-                        "description": "Fully qualified table name: catalog.schema.table",
-                    }
-                },
-                "required": ["full_name"],
-            },
+            "description": "Get full table metadata: columns (types, defaults, precision), tags, constraints (PK/FK), owner, format, timestamps.",
+            "parameters": FULL_NAME_PARAM,
         },
     },
     {
         "type": "function",
         "function": {
             "name": "search_tables",
-            "description": "Search for tables across all catalogs by exact name or keyword match. Returns matching tables with their full paths and descriptions. Best for searching by exact table names or specific keywords.",
+            "description": "Search tables by keyword in name, schema, or description. Returns up to 10 matches.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search keyword to match against table names, schema names, and descriptions",
-                    }
+                    "query": {"type": "string", "description": "Search keyword"}
                 },
                 "required": ["query"],
             },
@@ -90,34 +80,72 @@ UC_TOOLS = [
         "type": "function",
         "function": {
             "name": "semantic_search_tables",
-            "description": "Search for tables using semantic similarity. Best for conceptual queries like 'tables about environmental emissions' or 'pipeline safety data'. Returns tables whose descriptions are most relevant to the query meaning.",
+            "description": "Semantic search for tables by meaning. Best for conceptual queries like 'sales data' or 'customer reviews'.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Natural language description of the data you're looking for",
-                    }
+                    "query": {"type": "string", "description": "Natural language description"}
                 },
                 "required": ["query"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_table_tags",
+            "description": "Get governance tags on a table (e.g., PII, sensitivity, domain).",
+            "parameters": FULL_NAME_PARAM,
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_column_tags",
+            "description": "Get governance tags on columns (e.g., PII classification per column).",
+            "parameters": FULL_NAME_PARAM,
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_table_lineage",
+            "description": "Get data lineage: which tables feed into this table (upstream) and which tables consume it (downstream).",
+            "parameters": FULL_NAME_PARAM,
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_table_constraints",
+            "description": "Get primary key and foreign key constraints defined on a table.",
+            "parameters": FULL_NAME_PARAM,
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_table_privileges",
+            "description": "Show who has access to a table and what privileges they have (SELECT, MODIFY, etc.).",
+            "parameters": FULL_NAME_PARAM,
         },
     },
 ]
 
 DEFAULT_DISCOVERY_PROMPT = """You are the Data Discovery Agent for UC Data Advisor.
 
-You help users find datasets, understand table structures, and navigate the Unity Catalog. You have access to tools that let you browse UC metadata.
+You help users find datasets, understand table structures, and navigate Unity Catalog. You query system tables for rich metadata.
 
 Key behaviors:
-- For conceptual queries (e.g., "data about emissions"), prefer semantic_search_tables for better results
-- For exact name lookups (e.g., "nominations table"), use search_tables or get_table_details
-- When users ask about available data, start by listing catalogs or searching for relevant tables
-- When users ask about a specific dataset, get the full table details including column descriptions
-- Provide clear, concise answers about what data is available and how it's organized
-- If you're not sure which catalog or schema to look in, search across all of them
-- Always mention the fully qualified table name (catalog.schema.table) so users can reference it
-- When describing tables, highlight the most important columns and what the table is used for"""
+- For conceptual queries (e.g., "data about sales"), prefer semantic_search_tables
+- For exact name lookups, use search_tables or get_table_details
+- get_table_details returns columns, tags, constraints (PK/FK), owner, format, and timestamps
+- Use get_table_lineage to show what feeds into or consumes a table
+- Use get_table_tags / get_column_tags for governance metadata
+- Use get_table_constraints for PK/FK relationships
+- Use get_table_privileges to show who has access
+- Always mention the fully qualified table name (catalog.schema.table)
+- When describing tables, highlight important columns and what the table is used for"""
 
 
 class DiscoveryAgent(ResponsesBaseAgent):

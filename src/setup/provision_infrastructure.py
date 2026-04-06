@@ -383,6 +383,28 @@ def grant_uc_permissions(config: dict, w) -> None:
         except Exception:
             pass
 
+    # Grant access to system tables (information_schema + lineage)
+    for sp_id in sp_list:
+        for stmt in [
+            f"GRANT USE SCHEMA ON SCHEMA system.information_schema TO `{sp_id}`",
+            f"GRANT SELECT ON SCHEMA system.information_schema TO `{sp_id}`",
+        ]:
+            try:
+                _run_sql(w, warehouse_id, stmt)
+                print(f"      {stmt}")
+            except Exception:
+                pass
+        # Lineage tables — best-effort (requires account admin to enable)
+        for stmt in [
+            f"GRANT USE SCHEMA ON SCHEMA system.access TO `{sp_id}`",
+            f"GRANT SELECT ON SCHEMA system.access TO `{sp_id}`",
+        ]:
+            try:
+                _run_sql(w, warehouse_id, stmt)
+                print(f"      {stmt}")
+            except Exception:
+                pass
+
     # Grant CAN_USE on SQL warehouse
     if warehouse_id:
         for sp_id in sp_list:
