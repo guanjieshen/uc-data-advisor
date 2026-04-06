@@ -51,19 +51,19 @@ flowchart TB
 | Layer | Component | Purpose |
 |-------|-----------|---------|
 | **Model Serving** | Orchestrator Agent | LLM intent classifier that routes to sub-agents |
-| **Model Serving** | Discovery Agent | Find datasets by name, schema, description via UC API + Vector Search |
+| **Model Serving** | Discovery Agent | Find datasets, volumes, tags, lineage, constraints via VS metadata index |
 | **Model Serving** | Metrics Agent | Answer analytical questions via Genie Space (NL-to-SQL) |
 | **Model Serving** | Q&A Agent | RAG over governance FAQs and knowledge base |
 | **LLM** | Foundation Model | Pay-per-token model for all inference |
-| **Tools** | UC API, Vector Search, Genie | Metadata access, semantic search, SQL generation |
+| **Tools** | Vector Search, Genie | Metadata semantic search, NL-to-SQL |
 
 ## Key Design Decisions
 
-- **All agents on Model Serving**: Each agent (including orchestrator) runs on its own endpoint with scale-to-zero — independent scaling, versioning, and no app dependency
+- **System tables for metadata**: Setup queries `system.information_schema` for enriched metadata (columns, tags, constraints, lineage, privileges, volumes) and populates a Vector Search index
+- **VS index at runtime, no SQL**: Agents query the pre-built VS index — no SQL warehouse needed at runtime, sub-second responses
+- **All agents on Model Serving**: Each agent (including orchestrator) runs on its own endpoint with scale-to-zero
 - **Single entry point**: The orchestrator endpoint handles classification + routing — callable from Teams, notebooks, or any HTTP client
 - **User-provided SP**: A single service principal configured in YAML receives all grants and authenticates Model Serving containers via OAuth M2M
-- **Secret scope for credentials**: SP OAuth secrets stored in Databricks secret scope, read at deploy time and injected as env vars
-- **Catalog scoping**: Agents only see catalogs listed in `source_catalogs` config via `SOURCE_CATALOGS` env var
 - **Cross-cloud**: Works on both AWS and Azure Databricks workspaces
 
 ## Quick Start
@@ -89,10 +89,10 @@ app/
       discovery.py              # UC metadata discovery agent
       metrics.py                # Genie Space metrics agent
       qa.py                     # Knowledge base Q&A agent
-    tools/                      # UC API, Genie, Vector Search tool implementations
+    tools/                      # Genie, Vector Search tool implementations
     config.py                   # Auth chain (Model Serving OAuth M2M, CLI)
     advisor_config.py           # Runtime config loader
-    uc_tools.py                 # UC metadata tools (scoped to source_catalogs)
+    uc_tools.py                 # VS-based metadata search (no runtime SQL)
 src/
   setup/
     run.py                      # Pipeline orchestrator (8 steps + teardown)

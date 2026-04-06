@@ -87,9 +87,11 @@ All agents are registered as MLflow models in Unity Catalog and deployed to indi
 | Agent | MLflow Class | Tools | Data Source |
 |-------|-------------|-------|-------------|
 | **Orchestrator** | `OrchestratorAgent` | None (routes to sub-agents) | LLM for classification |
-| **Discovery** | `DiscoveryAgent` | `list_catalogs`, `list_schemas`, `list_tables`, `get_table_details`, `search_tables`, `semantic_search_tables` | UC API + VS metadata index |
+| **Discovery** | `DiscoveryAgent` | `search_metadata`, `semantic_search_tables` | VS metadata index (tables, volumes, tags, constraints, lineage, privileges) |
 | **Metrics** | `MetricsAgent` | `query_genie` | Genie Space (NL-to-SQL) |
 | **Q&A** | `QAAgent` | `search_knowledge_base` | VS knowledge base index |
+
+Discovery uses the VS metadata index exclusively — no runtime SQL queries. The index is populated at setup time from `system.information_schema` and `system.access` system tables.
 
 Endpoint properties:
 - **Scale to zero** when idle
@@ -104,6 +106,7 @@ A single user-provided service principal handles all auth:
 | What | Permission |
 |------|-----------|
 | **UC catalogs** | `USE CATALOG` + `SELECT` on source, `ALL PRIVILEGES` on advisor |
+| **System tables** | `USE SCHEMA` + `SELECT` on `system.information_schema` and `system.access` |
 | **SQL warehouse** | `CAN_USE` |
 | **Genie Space** | `CAN_RUN` |
 | **Agent endpoints** | `CAN_QUERY` |
@@ -119,10 +122,11 @@ The SP's OAuth secret is:
 
 | Tool | Used By | Implementation |
 |------|---------|----------------|
-| **UC API Tools** | Discovery | Databricks SDK — `catalogs.list()`, `schemas.list()`, `tables.list()`, `tables.get()`. Scoped to `SOURCE_CATALOGS` env var |
-| **VS Metadata Index** | Discovery | Delta Sync Vector Search index over `uc_metadata_docs` table |
-| **Genie Space** | Metrics | REST API — starts conversation, polls for SQL results |
-| **VS Knowledge Index** | Q&A | Delta Sync Vector Search index over `knowledge_base` table |
+| **VS Metadata Index** | Discovery | Delta Sync VS index over `uc_metadata_docs` — contains tables, volumes, columns, tags, constraints, lineage, privileges. Populated from `system.information_schema` at setup time |
+| **Genie Space** | Metrics | REST API — NL-to-SQL, starts conversation, polls for SQL results |
+| **VS Knowledge Index** | Q&A | Delta Sync VS index over `knowledge_base` — governance FAQs |
+
+No runtime SQL queries — all metadata discovery goes through Vector Search.
 
 ## Data Flow
 
@@ -130,7 +134,7 @@ The SP's OAuth secret is:
 2. Orchestrator makes a single LLM call to classify intent: `discovery`, `metrics`, `qa`, or `general`
 3. For `general`: orchestrator responds directly via LLM
 4. For agent intents: orchestrator calls the sub-agent endpoint via HTTP
-5. Sub-agent uses its tools (UC API, Genie, VS) and LLM to produce a response
+5. Discovery agent searches the VS metadata index; Metrics agent queries Genie; QA searches VS knowledge base
 6. Response returned to client
 
 ## Setup Pipeline
@@ -144,8 +148,8 @@ provision → grant-uc → audit → generate → register → deploy-agents →
 | Step | What It Does |
 |------|-------------|
 | `provision` | Creates catalog, VS endpoint, Genie space, SP OAuth secret in scope |
-| `grant-uc` | Grants UC, warehouse, and Genie permissions to SP |
-| `audit` | Walks source catalogs to collect metadata |
+| `grant-uc` | Grants UC, system tables, warehouse, and Genie permissions to SP |
+| `audit` | Queries system.information_schema for enriched metadata (tags, constraints, lineage, privileges, volumes) |
 | `generate` | Generates prompts, knowledge base, benchmarks |
 | `register` | Registers 4 agent MLflow models in UC (parallel) |
 | `deploy-agents` | Deploys 4 Model Serving endpoints via Agent Bricks (sub-agents parallel, orchestrator sequential) |

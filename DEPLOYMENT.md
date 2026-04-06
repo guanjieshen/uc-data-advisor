@@ -71,14 +71,20 @@ Creates all Databricks resources (idempotent — safe to re-run):
 Grants the configured service principal access to all required resources:
 - `USE CATALOG` + `SELECT` on each source catalog (+ `USE SCHEMA` per schema)
 - `ALL PRIVILEGES` on advisor catalog
+- `USE SCHEMA` + `SELECT` on `system.information_schema` and `system.access`
 - `CAN_USE` on SQL warehouse
 - `CAN_RUN` on Genie Space
 - `workspace-access` entitlement
 
 ### Step 3: Audit Metadata
 
-Walks your source catalogs via the Databricks SDK:
-- Collects catalog/schema/table/column names, types, comments, owners
+Queries `system.information_schema` as the configured SP for enriched metadata:
+- Catalogs, schemas, tables, columns (types, defaults, precision)
+- Table and column tags (governance labels)
+- Primary key / foreign key constraints
+- Table lineage (upstream/downstream from `system.access.table_lineage`)
+- Table privileges (who has access)
+- Volumes and file listings
 - Computes metadata description coverage percentage
 
 ### Step 4: Generate Content
@@ -107,9 +113,11 @@ Waits for all agent endpoints to be READY, then grants `CAN_QUERY` to the config
 
 ### Step 8: Deploy Artifacts
 
-1. Writes metadata docs to Delta table + creates Vector Search index (delta sync)
+1. Writes enriched metadata docs (tables + volumes with tags, constraints, lineage, privileges) to Delta table + creates Vector Search index (delta sync)
 2. Writes knowledge base FAQs to Delta table + creates Vector Search index (delta sync)
 3. Updates Genie Space table list
+
+Agents query the VS indexes at runtime — no SQL warehouse needed for metadata lookups.
 
 ## Permissions
 
@@ -183,13 +191,14 @@ Client (Teams, Notebook, HTTP)
     ↓    ↓    ↓
  Discovery  Metrics  Q&A          ← Each is a Model Serving endpoint
     ↓         ↓       ↓
- UC API    Genie   Knowledge
- + VS      Space    Base VS
-    ↓         ↓       ↓
-    Unity Catalog (source data)
+ VS Index   Genie   Knowledge
+ (metadata) Space   Base VS
+    ↑         ↓
+    system.information_schema → Unity Catalog (populated at setup time)
 ```
 
 - **Orchestrator endpoint**: Single entry point — classifies intent via LLM, routes to sub-agent endpoints, handles general responses directly
+- **Discovery via VS index**: Queries a pre-built metadata index containing tables, volumes, columns, tags, constraints, lineage, privileges — no runtime SQL
 - **Model Serving**: Each agent runs on its own endpoint with scale-to-zero. Authenticates outbound calls via SP OAuth M2M
 - **Genie Space**: Metrics agent sends natural language questions to Genie, which translates to SQL and returns results
 - **Vector Search**: Discovery agent uses a metadata VS index for semantic table search. QA agent uses a knowledge base VS index for FAQ retrieval. Both are delta sync
