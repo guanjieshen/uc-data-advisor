@@ -47,8 +47,11 @@ def register_agent_models(config: dict, w) -> dict:
     # picks up notebook context automatically but MLflow does not.
     if not os.environ.get("DATABRICKS_HOST"):
         os.environ["DATABRICKS_HOST"] = w.config.host
-    if not os.environ.get("DATABRICKS_TOKEN") and w.config.token:
-        os.environ["DATABRICKS_TOKEN"] = w.config.token
+    if not os.environ.get("DATABRICKS_TOKEN"):
+        headers = w.config.authenticate()
+        bearer = headers.get("Authorization", "")
+        if bearer.startswith("Bearer "):
+            os.environ["DATABRICKS_TOKEN"] = bearer[len("Bearer "):]
 
     mlflow.set_registry_uri("databricks-uc")
     mlflow.set_experiment(f"/uc-data-advisor-{app_name}-traces")
