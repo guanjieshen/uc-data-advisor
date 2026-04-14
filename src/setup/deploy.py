@@ -287,7 +287,7 @@ def _deploy_genie_space(config, w):
         })
         print("    Updated")
     except Exception as e:
-        logger.warning(f"    Genie Space update failed: {e}")
+        logger.warning(f"  [genie] Skipping — update failed ({len(genie_tables)} tables): {e}")
 
 
 # ---------------------------------------------------------------------------

@@ -43,6 +43,13 @@ def register_agent_models(config: dict, w) -> dict:
     server_dir = os.path.join(app_dir, "server")
     config_dir = os.path.join(project_root, "config")
 
+    # Ensure MLflow can authenticate — on serverless clusters the SDK
+    # picks up notebook context automatically but MLflow does not.
+    if not os.environ.get("DATABRICKS_HOST"):
+        os.environ["DATABRICKS_HOST"] = w.config.host
+    if not os.environ.get("DATABRICKS_TOKEN") and w.config.token:
+        os.environ["DATABRICKS_TOKEN"] = w.config.token
+
     mlflow.set_registry_uri("databricks-uc")
     mlflow.set_experiment(f"/uc-data-advisor-{app_name}-traces")
 
