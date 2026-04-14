@@ -3,13 +3,19 @@
 import os
 import json
 import logging
+from typing import Generator
 from uuid import uuid4
 
 from openai import OpenAI, AsyncOpenAI, BadRequestError
 from mlflow.pyfunc import ResponsesAgent
 from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse
 
-from ..config import get_oauth_token, get_workspace_host, IS_DATABRICKS_APP
+try:
+    from mlflow.types.responses import ResponsesAgentStreamEvent
+except ImportError:
+    ResponsesAgentStreamEvent = None
+
+from ..config import get_oauth_token, get_workspace_host
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +72,13 @@ class ResponsesBaseAgent(ResponsesAgent):
 
     def execute_tool(self, name: str, args: dict) -> dict | list:
         raise NotImplementedError
+
+    def predict_stream(
+        self, request: ResponsesAgentRequest
+    ) -> Generator[ResponsesAgentStreamEvent, None, None]:
+        """Stream the agent response. Runs tool loop to completion, then streams final text."""
+        response = self.predict(request)
+        yield from self.output_to_responses_items_stream(response.output)
 
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
         client = get_sync_llm_client()

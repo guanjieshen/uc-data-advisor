@@ -1,7 +1,7 @@
 """Deploy generated artifacts to the Databricks workspace.
 
 Creates Delta tables, VS indexes, metric views, materialized tables,
-updates Genie Space, generates app.yaml, and deploys the app.
+updates Genie Space tables.
 """
 
 import hashlib
@@ -40,9 +40,6 @@ def deploy(config: dict, w) -> None:
     # Step 5: Update Genie Space
     _deploy_genie_space(config, w)
 
-    # Step 6: Generate app.yaml and deploy app
-    _deploy_app(config, w)
-
     print()
     print("=" * 60)
     print("Deployment complete")
@@ -66,14 +63,17 @@ def _deploy_metadata_table(config, w, warehouse_id):
 
     print(f"  [metadata] Writing {len(audit.get('tables', []))} tables to {table}...")
 
-    # Create table
+    # Create table with enriched columns
     _run_sql(w, warehouse_id, f"DROP TABLE IF EXISTS {table}")
     _run_sql(w, warehouse_id, f"""
         CREATE TABLE {table} (
             doc_id STRING NOT NULL,
             catalog_name STRING, schema_name STRING, table_name STRING,
             full_table_name STRING, table_comment STRING, table_type STRING,
-            columns_json STRING, description_text STRING
+            table_owner STRING, data_source_format STRING,
+            created_at STRING, last_altered STRING,
+            columns_json STRING, tags_json STRING, constraints_json STRING,
+            description_text STRING
         ) USING DELTA
         TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
     """)
@@ -81,20 +81,11 @@ def _deploy_metadata_table(config, w, warehouse_id):
     # Insert rows in batches
     rows = []
     for tbl in audit.get("tables", []):
-        col_descs = []
-        for c in tbl.get("columns", []):
-            desc = f"  - {c['name']} ({c['type']})"
-            if c.get("comment"):
-                desc += f": {c['comment']}"
-            col_descs.append(desc)
+        desc_parts = _build_table_description(tbl)
+        description_text = "\n".join(desc_parts)
 
-        description_text = "\n".join([
-            f"Table: {tbl['full_name']}",
-            f"Catalog: {tbl['catalog_name']}",
-            f"Schema: {tbl['catalog_name']}.{tbl['schema_name']}",
-            f"Description: {tbl.get('comment', '')}",
-            "Columns:\n" + "\n".join(col_descs),
-        ])
+        tags = tbl.get("tags", [])
+        constraints = tbl.get("constraints", [])
 
         doc_id = hashlib.md5(tbl["full_name"].encode()).hexdigest()[:16]
         rows.append({
@@ -105,8 +96,57 @@ def _deploy_metadata_table(config, w, warehouse_id):
             "full_table_name": tbl["full_name"],
             "table_comment": tbl.get("comment", ""),
             "table_type": tbl.get("table_type", ""),
+            "table_owner": tbl.get("owner", ""),
+            "data_source_format": tbl.get("data_source_format", ""),
+            "created_at": str(tbl.get("created", "")),
+            "last_altered": str(tbl.get("last_altered", "")),
             "columns_json": json.dumps([{"name": c["name"], "type": c["type"], "comment": c.get("comment", "")} for c in tbl.get("columns", [])]),
+            "tags_json": json.dumps(tags),
+            "constraints_json": json.dumps(constraints),
             "description_text": description_text,
+        })
+
+    # Add volume docs to the same metadata table
+    for vol in audit.get("volumes", []):
+        desc_parts = [
+            f"Volume: {vol['full_name']}",
+            f"Catalog: {vol['catalog_name']}",
+            f"Schema: {vol['catalog_name']}.{vol['schema_name']}",
+            f"Type: {vol.get('volume_type', 'MANAGED')}",
+        ]
+        if vol.get("comment"):
+            desc_parts.append(f"Description: {vol['comment']}")
+        if vol.get("storage_location"):
+            desc_parts.append(f"Location: {vol['storage_location']}")
+
+        files = vol.get("files", [])
+        if files:
+            file_names = [f.get("name", "") for f in files if not f.get("is_directory")]
+            desc_parts.append(f"Files ({len(file_names)}): " + ", ".join(file_names[:20]))
+
+            # Include content previews if indexed
+            for f in files:
+                preview = f.get("content_preview", "")
+                if preview and len(preview) > 20:
+                    desc_parts.append(f"Content of {f['name']}: {preview[:500]}")
+
+        doc_id = hashlib.md5(vol["full_name"].encode()).hexdigest()[:16]
+        rows.append({
+            "doc_id": doc_id,
+            "catalog_name": vol["catalog_name"],
+            "schema_name": vol["schema_name"],
+            "table_name": vol["name"],
+            "full_table_name": vol["full_name"],
+            "table_comment": vol.get("comment", ""),
+            "table_type": "VOLUME",
+            "table_owner": vol.get("owner", ""),
+            "data_source_format": vol.get("volume_type", ""),
+            "created_at": str(vol.get("created", "")),
+            "last_altered": "",
+            "columns_json": json.dumps([{"name": f.get("name", ""), "type": "file", "comment": ""} for f in files]),
+            "tags_json": "[]",
+            "constraints_json": "[]",
+            "description_text": "\n".join(desc_parts),
         })
 
     # Batch insert
@@ -116,7 +156,10 @@ def _deploy_metadata_table(config, w, warehouse_id):
         values = ",\n".join(
             f"('{_esc(r['doc_id'])}', '{_esc(r['catalog_name'])}', '{_esc(r['schema_name'])}', "
             f"'{_esc(r['table_name'])}', '{_esc(r['full_table_name'])}', '{_esc(r['table_comment'])}', "
-            f"'{_esc(r['table_type'])}', '{_esc(r['columns_json'])}', '{_esc(r['description_text'])}')"
+            f"'{_esc(r['table_type'])}', '{_esc(r['table_owner'])}', '{_esc(r['data_source_format'])}', "
+            f"'{_esc(r['created_at'])}', '{_esc(r['last_altered'])}', "
+            f"'{_esc(r['columns_json'])}', '{_esc(r['tags_json'])}', '{_esc(r['constraints_json'])}', "
+            f"'{_esc(r['description_text'])}')"
             for r in batch
         )
         _run_sql(w, warehouse_id, f"INSERT INTO {table} VALUES\n{values}")
@@ -248,134 +291,6 @@ def _deploy_genie_space(config, w):
 
 
 # ---------------------------------------------------------------------------
-# Step 6: App deployment
-# ---------------------------------------------------------------------------
-
-def _deploy_app(config, w):
-    """Generate app.yaml from config and deploy the app."""
-    infra = config.get("infrastructure", {})
-    app_name = infra.get("app_name", "uc-data-advisor")
-    lb = infra.get("lakebase", {})
-
-    print("  [app] Generating app.yaml...")
-
-    app_yaml = f"""command:
-  - "python"
-  - "-m"
-  - "uvicorn"
-  - "app:app"
-  - "--host"
-  - "0.0.0.0"
-  - "--port"
-  - "8000"
-
-env:
-  - name: SERVING_ENDPOINT
-    value: {infra.get('serving_endpoint', 'uc-advisor-llm')}
-  - name: GENIE_SPACE_ID
-    value: "{infra.get('genie_space_id', '')}"
-  - name: VS_INDEX_METADATA
-    value: "{infra.get('vs_index_metadata', '')}"
-  - name: VS_INDEX_KNOWLEDGE
-    value: "{infra.get('vs_index_knowledge', '')}"
-  - name: PGHOST
-    value: "{lb.get('host', '')}"
-  - name: PGPORT
-    value: "{lb.get('port', 5432)}"
-  - name: PGDATABASE
-    value: "{lb.get('database', '')}"
-  - name: PGUSER
-    value: "{infra.get('app_sp_client_id', '')}"
-  - name: LAKEBASE_INSTANCE
-    value: "{lb.get('instance', '')}"
-  - name: ADVISOR_CONFIG_PATH
-    value: "config/advisor_config.yaml"
-"""
-
-
-    # Write app.yaml
-    app_dir = os.path.join(os.path.dirname(__file__), "..", "..", "app")
-    yaml_path = os.path.join(app_dir, "app.yaml")
-    with open(yaml_path, "w") as f:
-        f.write(app_yaml)
-    print(f"    Written to {yaml_path}")
-
-    import subprocess
-    workspace = config.get("workspace", {})
-    profile = workspace.get("profile", "")
-    token = workspace.get("token", "")
-    host = workspace.get("host", "")
-
-    def _cli(cmd_args, description=""):
-        cmd = ["databricks"] + cmd_args
-        env = None
-        if token and host:
-            env = {**os.environ, "DATABRICKS_HOST": host, "DATABRICKS_TOKEN": token}
-        elif profile:
-            cmd += ["-p", profile]
-        elif host:
-            env = {**os.environ, "DATABRICKS_HOST": host}
-        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
-        if result.returncode != 0:
-            logger.warning(f"{description} failed: {result.stderr[:300]}")
-        return result
-
-    # Step 1: Create the app if it doesn't exist
-    print(f"  [app] Creating app {app_name}...", end=" ", flush=True)
-    result = _cli(["apps", "get", app_name], "app get")
-    if result.returncode != 0:
-        result = _cli([
-            "apps", "create", app_name,
-            "--description", f"UC Data Advisor — {infra.get('advisor_catalog', '')}",
-        ], "app create")
-        if result.returncode == 0:
-            print("created")
-        else:
-            print(f"FAILED (create the app manually: databricks apps create {app_name})")
-            return
-    else:
-        print("already exists")
-
-    # Step 2: Upload app files to workspace
-    deployer_user = w.current_user.me().user_name
-    workspace_path = f"/Users/{deployer_user}/{app_name}"
-
-    print(f"  [app] Uploading to {workspace_path}...")
-    result = _cli(["workspace", "import-dir", app_dir, workspace_path, "--overwrite"], "app upload")
-    if result.returncode != 0:
-        return
-
-    # Upload the specific config file as config/advisor_config.yaml
-    # (matches the ADVISOR_CONFIG_PATH env var in app.yaml)
-    config_src = os.path.abspath(config.get("_config_path", "config/advisor_config.yaml"))
-    _cli(["workspace", "mkdirs", f"{workspace_path}/config"], "config dir")
-    _cli(["workspace", "import", f"{workspace_path}/config/advisor_config.yaml", "--file", config_src, "--format", "AUTO", "--overwrite"], "config upload")
-
-    # Step 3: Deploy the app
-    print(f"  [app] Deploying {app_name}...")
-    result = _cli(["apps", "deploy", app_name, "--source-code-path", f"/Workspace{workspace_path}"], "app deploy")
-    if result.returncode == 0:
-        try:
-            resp = json.loads(result.stdout)
-            state = resp.get("status", {}).get("state", "UNKNOWN")
-            print(f"    {state}")
-            # Print the app URL
-            app_info = _cli(["apps", "get", app_name, "-o", "json"], "app get")
-            if app_info.returncode == 0:
-                try:
-                    app_data = json.loads(app_info.stdout)
-                    url = app_data.get("url", "")
-                    if url:
-                        print(f"    URL: {url}")
-                except Exception:
-                    pass
-        except Exception:
-            print("    Deployed")
-    else:
-        print(f"    Deploy failed — check: databricks apps get {app_name}")
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -424,6 +339,69 @@ def _create_vs_index(w, index_name, endpoint_name, source_table, primary_key, em
             print("already exists")
         else:
             print(f"FAILED: {e}")
+
+
+def _build_table_description(tbl: dict) -> list[str]:
+    """Build comprehensive description_text for VS embedding from all metadata."""
+    desc = [
+        f"Table: {tbl['full_name']}",
+        f"Catalog: {tbl['catalog_name']}",
+        f"Schema: {tbl['catalog_name']}.{tbl['schema_name']}",
+        f"Type: {tbl.get('table_type', 'MANAGED')}",
+    ]
+    if tbl.get("comment"):
+        desc.append(f"Description: {tbl['comment']}")
+    if tbl.get("data_source_format"):
+        desc.append(f"Format: {tbl['data_source_format']}")
+    if tbl.get("owner"):
+        desc.append(f"Owner: {tbl['owner']}")
+    if tbl.get("created"):
+        desc.append(f"Created: {tbl['created']}")
+    if tbl.get("last_altered"):
+        desc.append(f"Last modified: {tbl['last_altered']}")
+
+    # Tags
+    tags = tbl.get("tags", [])
+    if tags:
+        desc.append(f"Table tags: " + ", ".join(f"{t['tag_name']}={t['tag_value']}" for t in tags))
+
+    # Constraints
+    for con in tbl.get("constraints", []):
+        desc.append(f"{con['constraint_type']}: {', '.join(con.get('columns', []))}")
+
+    # Lineage
+    upstream = tbl.get("upstream", [])
+    if upstream:
+        desc.append(f"Upstream (feeds into this table): {', '.join(upstream[:10])}")
+    downstream = tbl.get("downstream", [])
+    if downstream:
+        desc.append(f"Downstream (consumes this table): {', '.join(downstream[:10])}")
+
+    # Privileges
+    privileges = tbl.get("privileges", [])
+    if privileges:
+        priv_strs = [f"{p['grantee']}:{p['privilege_type']}" for p in privileges[:20]]
+        desc.append(f"Access: {', '.join(priv_strs)}")
+
+    # Columns with full detail
+    col_descs = []
+    for c in tbl.get("columns", []):
+        parts = [f"  - {c['name']} ({c['type']})"]
+        if c.get("comment"):
+            parts.append(f": {c['comment']}")
+        if c.get("column_default"):
+            parts.append(f" [default: {c['column_default']}]")
+        if c.get("numeric_precision"):
+            parts.append(f" [precision: {c['numeric_precision']}]")
+        if c.get("character_maximum_length") and str(c["character_maximum_length"]) != "0":
+            parts.append(f" [max_len: {c['character_maximum_length']}]")
+        col_tags = c.get("tags", [])
+        if col_tags:
+            parts.append(f" [tags: {', '.join(t['tag_name'] + '=' + t['tag_value'] for t in col_tags)}]")
+        col_descs.append("".join(parts))
+    desc.append("Columns:\n" + "\n".join(col_descs))
+
+    return desc
 
 
 def _run_sql(w, warehouse_id, statement, timeout=60):

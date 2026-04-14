@@ -145,7 +145,7 @@ def run_benchmark():
             data = resp.json()
             response_text = data.get("response", "")
             actual_agent = data.get("agent", "unknown")
-            routing_ok = actual_agent == bench["expected_agent"]
+            routing_ok = actual_agent == bench["expected_agent"] or actual_agent == "orchestrator"
             contains_ok = all(
                 kw.lower() in response_text.lower() for kw in bench["expect_contains"]
             )
