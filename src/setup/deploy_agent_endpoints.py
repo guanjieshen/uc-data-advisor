@@ -31,13 +31,11 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
         print("  No registered models found — run 'register' step first")
         return {}
 
-    import mlflow
-    experiment_name = f"/uc-data-advisor-{app_name}-traces"
-    mlflow.set_experiment(experiment_name)
+    catalog = infra.get("advisor_catalog", "")
+    schema = infra.get("advisor_schema", "default")
 
     print("=" * 60)
     print("Deploying Agent Endpoints (parallel)")
-    print(f"  MLflow experiment: {experiment_name}")
     print("=" * 60)
 
     workspace_host = config.get("workspace", {}).get("host", "")
@@ -83,11 +81,8 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
         version = str(model_info["version"])
         ep_env = deploy_env_vars or secret_env_vars
 
-        # Add static env vars that agents.deploy() used to inject
         full_env = dict(ep_env)
-        full_env.setdefault("ENABLE_MLFLOW_TRACING", "true")
         full_env.setdefault("ENABLE_LANGCHAIN_STREAMING", "true")
-        full_env.setdefault("RETURN_REQUEST_ID_IN_RESPONSE", "true")
 
         _wait_for_endpoint_ready(w, ep_name)
 
@@ -133,7 +128,7 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
 
         # Wait for endpoint to be READY before patching config
         _wait_for_endpoint_ready(w, ep_name)
-        _configure_ai_gateway(w, ep_name, config)
+        _configure_ai_gateway(w, ep_name, config, catalog, schema)
         _patch_endpoint_env_vars(w, ep_name, ep_env)
 
         return agent_name, ep_name
@@ -245,22 +240,31 @@ def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):
         logger.warning(f"Failed to patch env vars on {ep_name}: {e}")
 
 
-def _configure_ai_gateway(w, ep_name: str, config: dict):
-    """Configure AI Gateway on an agent serving endpoint."""
-    ai_gateway = {}
+def _configure_ai_gateway(w, ep_name: str, config: dict, catalog: str, schema: str):
+    """Configure AI Gateway on an agent serving endpoint.
+
+    Always enables inference tables and rate limits (GA in all Azure regions
+    including Canada Central). AI Guardrails are opt-in via config since they
+    require Foundation Model APIs pay-per-token without cross-geo, which
+    excludes Canada Central and other non-US/EU regions.
+    """
+    ai_gateway = {
+        "inference_table_config": {
+            "enabled": True,
+            "catalog_name": catalog,
+            "schema_name": schema,
+            "table_name_prefix": ep_name.replace("-", "_"),
+        },
+        "rate_limits": [
+            {"calls": 120, "key": "user", "renewal_period": "minute"},
+        ],
+    }
 
     if config.get("enable_ai_gateway_guardrails", False):
         ai_gateway["guardrails"] = {
             "input": {"safety": True, "pii": {"behavior": "NONE"}},
             "output": {"safety": False, "pii": {"behavior": "NONE"}},
         }
-
-    rate_limits = config.get("rate_limits")
-    if rate_limits:
-        ai_gateway["rate_limits"] = rate_limits
-
-    if not ai_gateway:
-        return
 
     try:
         w.api_client.do("PUT", f"/api/2.0/serving-endpoints/{ep_name}/ai-gateway", body=ai_gateway)

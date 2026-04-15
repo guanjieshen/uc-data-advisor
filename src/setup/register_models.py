@@ -1,12 +1,17 @@
-"""Register each agent as an MLflow model in Unity Catalog.
+"""Register each agent as a model in Unity Catalog.
 
-Uses MLflow's model-from-code pattern: creates a thin model definition file
-per agent that MLflow loads at serving time. Registers all agents in parallel.
+Uses mlflow.pyfunc.save_model() for local artifact packaging (no network),
+then uploads to a UC Volume via the Files API and creates the model version
+via the UC REST API. No MLflow tracking, registry client, or artifact
+upload pipeline involved — all registration goes through the Databricks SDK
+and UC REST endpoints.
 """
 
 import os
 import logging
 import textwrap
+import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
@@ -28,10 +33,14 @@ AGENT_DEFS = {
     "orchestrator": ("orchestrator_agent", "OrchestratorAgent"),
 }
 
+VOLUME_NAME = "model_artifacts"
+
 
 def register_agent_models(config: dict, w) -> dict:
-    """Log and register all agent models in UC model registry in parallel."""
-    import mlflow
+    """Package and register all agent models in UC via Volume upload + REST API."""
+    import mlflow.pyfunc
+    from databricks.sdk.service.catalog import VolumeType
+    from databricks.sdk.errors import ResourceAlreadyExists
 
     infra = config.get("infrastructure", {})
     app_name = infra.get("app_name", "uc-data-advisor")
@@ -42,20 +51,6 @@ def register_agent_models(config: dict, w) -> dict:
     app_dir = os.path.join(project_root, "app")
     server_dir = os.path.join(app_dir, "server")
     config_dir = os.path.join(project_root, "config")
-
-    # Ensure MLflow can authenticate — on serverless clusters the SDK
-    # picks up notebook context automatically but MLflow does not.
-    if not os.environ.get("DATABRICKS_HOST"):
-        os.environ["DATABRICKS_HOST"] = w.config.host
-    if not os.environ.get("DATABRICKS_TOKEN"):
-        headers = w.config.authenticate()
-        bearer = headers.get("Authorization", "")
-        if bearer.startswith("Bearer "):
-            os.environ["DATABRICKS_TOKEN"] = bearer[len("Bearer "):]
-    os.environ.pop("DATABRICKS_CONFIG_PROFILE", None)
-
-    mlflow.set_registry_uri("databricks-uc")
-    mlflow.set_experiment(f"/uc-data-advisor-{app_name}-traces")
 
     req_path = os.path.join(app_dir, "requirements.txt")
     pip_reqs = []
@@ -73,9 +68,18 @@ def register_agent_models(config: dict, w) -> dict:
     if app_dir not in sys.path:
         sys.path.insert(0, app_dir)
 
-    # Set config path so agents don't warn during MLflow validation
+    # Set config path so agents don't warn during save_model validation
     config_path = os.path.abspath(config.get("_config_path", "config/advisor_config.yaml"))
     os.environ.setdefault("ADVISOR_CONFIG_PATH", config_path)
+
+    # Ensure model artifacts volume exists
+    try:
+        w.volumes.create(
+            catalog_name=catalog, schema_name=schema,
+            name=VOLUME_NAME, volume_type=VolumeType.MANAGED,
+        )
+    except ResourceAlreadyExists:
+        pass
 
     print("=" * 60)
     print("Registering Agent Models (parallel)")
@@ -83,7 +87,8 @@ def register_agent_models(config: dict, w) -> dict:
 
     def _register_one(agent_name):
         module_name, class_name = AGENT_DEFS[agent_name]
-        model_name = f"{catalog}.{schema}.{app_name.replace('-', '_')}_{agent_name}_agent"
+        model_short = f"{app_name.replace('-', '_')}_{agent_name}_agent"
+        model_fqn = f"{catalog}.{schema}.{model_short}"
 
         model_def_code = MODEL_DEF_TEMPLATE.format(module=module_name, class_name=class_name)
         model_def_path = os.path.join(app_dir, f"{agent_name}_model.py")
@@ -92,19 +97,44 @@ def register_agent_models(config: dict, w) -> dict:
             f.write(model_def_code)
 
         try:
-            with mlflow.start_run(run_name=f"register_{agent_name}_agent"):
-                model_info = mlflow.pyfunc.log_model(
-                    name=f"{agent_name}_agent",
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                local_path = os.path.join(tmp_dir, "model")
+
+                # 1. Package model locally (no network calls)
+                mlflow.pyfunc.save_model(
+                    path=local_path,
                     python_model=model_def_path,
                     code_paths=[server_dir, config_dir],
                     pip_requirements=pip_reqs,
-                    registered_model_name=model_name,
                 )
-            version = model_info.registered_model_version
+
+                # 2. Upload packaged artifacts to UC Volume
+                volume_path = f"/Volumes/{catalog}/{schema}/{VOLUME_NAME}/{model_short}"
+                _upload_directory(w, local_path, volume_path)
+
+                # 3. Create registered model (if not exists)
+                try:
+                    w.registered_models.create(
+                        catalog_name=catalog, schema_name=schema, name=model_short,
+                    )
+                except ResourceAlreadyExists:
+                    pass
+
+                # 4. Create model version from Volume source via REST API
+                resp = w.api_client.do(
+                    "POST",
+                    f"/api/2.1/unity-catalog/models/{model_fqn}/versions",
+                    body={"source": volume_path},
+                )
+                version = str(resp["model_version"]["version"])
+
+                # 5. Finalize model version
+                _finalize_model_version(w, model_fqn, version)
+
             return agent_name, {
-                "model_name": model_name,
+                "model_name": model_fqn,
                 "version": version,
-                "uri": f"models:/{model_name}/{version}",
+                "uri": f"models:/{model_fqn}/{version}",
             }
         finally:
             if os.path.exists(model_def_path):
@@ -125,3 +155,37 @@ def register_agent_models(config: dict, w) -> dict:
 
     print(f"  Registered {len(registered)}/{len(AGENTS)} models")
     return registered
+
+
+def _upload_directory(w, local_dir: str, volume_base: str) -> None:
+    """Upload a local directory tree to a UC Volume path via Files API."""
+    for root, _dirs, files in os.walk(local_dir):
+        for fname in files:
+            local_file = os.path.join(root, fname)
+            rel_path = os.path.relpath(local_file, local_dir)
+            remote_path = f"{volume_base}/{rel_path}"
+            with open(local_file, "rb") as f:
+                w.files.upload(remote_path, f, overwrite=True)
+
+
+def _finalize_model_version(w, model_fqn: str, version: str, timeout: int = 300) -> None:
+    """Finalize a model version and wait for READY status."""
+    w.api_client.do(
+        "POST",
+        f"/api/2.1/unity-catalog/models/{model_fqn}/versions/{version}/finalize",
+    )
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        resp = w.api_client.do(
+            "GET",
+            f"/api/2.1/unity-catalog/models/{model_fqn}/versions/{version}",
+        )
+        status = resp.get("model_version", resp).get("status", "")
+        if status == "READY":
+            return
+        if status == "FAILED_REGISTRATION":
+            raise RuntimeError(f"Model version {model_fqn} v{version} failed registration")
+        time.sleep(5)
+
+    raise TimeoutError(f"Model version {model_fqn} v{version} did not reach READY in {timeout}s")

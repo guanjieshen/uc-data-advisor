@@ -39,8 +39,4 @@ service_principal: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 enable_metric_views: false    # Generate metric views and materialized tables
 enable_volume_indexing: false # Extract text from volume documents (PDFs, CSVs) for semantic search (default: false)
 scale_to_zero: true          # Scale agent endpoints to zero when idle (default: true)
-enable_ai_gateway_guardrails: false  # Enable input safety guardrails on agent endpoints
-# rate_limits:                       # AI Gateway rate limits on agent endpoints
-#   - calls: 120                     # Max number of calls allowed per renewal period
-#     key: user                      # Rate limit scope: "user" (per-user) or "endpoint" (shared)
-#     renewal_period: minute         # Reset interval: "minute" or "day"
+enable_ai_gateway_guardrails: false  # Enable AI Guardrails (requires Foundation Model APIs pay-per-token without cross-geo — not available in Canada Central)
