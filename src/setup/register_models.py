@@ -120,11 +120,11 @@ def register_agent_models(config: dict, w) -> dict:
                 except ResourceAlreadyExists:
                     pass
 
-                # 4. Create model version from Volume source via REST API
+                # 4. Create model version from Volume source via UC REST API
                 resp = w.api_client.do(
                     "POST",
-                    f"/api/2.1/unity-catalog/models/{model_fqn}/versions",
-                    body={"source": volume_path},
+                    "/api/2.0/mlflow/unity-catalog/model-versions/create",
+                    body={"name": model_fqn, "source": volume_path},
                 )
                 version = str(resp["model_version"]["version"])
 
@@ -172,14 +172,16 @@ def _finalize_model_version(w, model_fqn: str, version: str, timeout: int = 300)
     """Finalize a model version and wait for READY status."""
     w.api_client.do(
         "POST",
-        f"/api/2.1/unity-catalog/models/{model_fqn}/versions/{version}/finalize",
+        "/api/2.0/mlflow/unity-catalog/model-versions/finalize",
+        body={"name": model_fqn, "version": version},
     )
 
     deadline = time.time() + timeout
     while time.time() < deadline:
         resp = w.api_client.do(
             "GET",
-            f"/api/2.1/unity-catalog/models/{model_fqn}/versions/{version}",
+            "/api/2.0/mlflow/unity-catalog/model-versions/get",
+            query={"name": model_fqn, "version": version},
         )
         status = resp.get("model_version", resp).get("status", "")
         if status == "READY":
