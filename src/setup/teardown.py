@@ -59,21 +59,15 @@ def teardown(config: dict, w) -> None:
 
 
 def _teardown_agent_endpoints(infra: dict, catalog: str, app_name: str) -> None:
-    """Delete agent deployments and serving endpoints."""
-    from databricks import agents
+    """Delete agent serving endpoints."""
+    from databricks.sdk import WorkspaceClient
 
     print("  [1/6] Agent endpoints")
+    w = WorkspaceClient()
     for agent in ["discovery", "metrics", "qa", "orchestrator"]:
-        model_name = f"{catalog}.default.{app_name.replace('-', '_')}_{agent}_agent"
         ep_name = f"{app_name}-{agent}-agent"
         try:
-            agents.delete_deployment(model_name=model_name)
-            print(f"    Deleted deployment: {model_name}")
-        except Exception as e:
-            print(f"    Deployment {agent}: {_short_err(e)}")
-        try:
-            from databricks.sdk import WorkspaceClient
-            WorkspaceClient().serving_endpoints.delete(ep_name)
+            w.serving_endpoints.delete(ep_name)
             print(f"    Deleted endpoint: {ep_name}")
         except Exception as e:
             print(f"    Endpoint {agent}: {_short_err(e)}")

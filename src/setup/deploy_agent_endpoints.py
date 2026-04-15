@@ -1,7 +1,8 @@
-"""Deploy registered agent models using Databricks Agent Bricks SDK.
+"""Deploy registered agent models as serving endpoints via the Databricks SDK.
 
-Uses databricks.agents.deploy() for proper Agent Bricks deployment
-with built-in observability, Review App, and scaling. Deploys all agents in parallel.
+Creates or updates Model Serving endpoints directly through the REST API,
+avoiding the agents.deploy() artifact-download path that bypasses Unity Catalog.
+Deploys sub-agents in parallel, then the orchestrator.
 """
 
 import time
@@ -12,8 +13,15 @@ logger = logging.getLogger(__name__)
 
 
 def deploy_agent_endpoints(config: dict, w) -> dict:
-    """Deploy each registered agent model via Agent Bricks SDK in parallel."""
-    from databricks import agents
+    """Deploy each registered agent model as a serving endpoint in parallel."""
+    from databricks.sdk.service.serving import (
+        EndpointCoreConfigInput,
+        ServedEntityInput,
+        EndpointTag,
+        Route,
+        TrafficConfig,
+    )
+    from databricks.sdk.errors import ResourceAlreadyExists
 
     infra = config.get("infrastructure", {})
     app_name = infra.get("app_name", "uc-data-advisor")
@@ -72,49 +80,60 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     def _deploy_one(agent_name, model_info, deploy_env_vars=None):
         ep_name = f"{app_name}-{agent_name}-agent"
         model_name = model_info["model_name"]
-        version = model_info["version"]
+        version = str(model_info["version"])
         ep_env = deploy_env_vars or secret_env_vars
+
+        # Add static env vars that agents.deploy() used to inject
+        full_env = dict(ep_env)
+        full_env.setdefault("ENABLE_MLFLOW_TRACING", "true")
+        full_env.setdefault("ENABLE_LANGCHAIN_STREAMING", "true")
+        full_env.setdefault("RETURN_REQUEST_ID_IN_RESPONSE", "true")
 
         _wait_for_endpoint_ready(w, ep_name)
 
-        try:
-            agents.delete_deployment(model_name=model_name)
-        except Exception:
-            pass
+        # Build served entity — name mirrors agents SDK pattern
+        served_entity_name = f"{model_name.replace('.', '_')}_{version}"[:63]
 
-        # Try with {{secrets/...}} refs first; fall back to plain env vars if not supported
+        served_entity = ServedEntityInput(
+            name=served_entity_name,
+            entity_name=model_name,
+            entity_version=version,
+            workload_size="Small",
+            scale_to_zero_enabled=scale_to_zero,
+            environment_vars=full_env,
+        )
+
+        endpoint_tags = [
+            EndpointTag(key="app", value=app_name),
+            EndpointTag(key="agent", value=agent_name),
+        ]
+
+        traffic = TrafficConfig(
+            routes=[Route(served_model_name=served_entity_name, traffic_percentage=100)]
+        )
+
+        # Create endpoint; if it already exists, update its config
         try:
-            agents.deploy(
-                model_name=model_name,
-                model_version=int(version),
-                endpoint_name=ep_name,
-                scale_to_zero=scale_to_zero,
-                environment_vars=ep_env,
-                tags={"app": app_name, "agent": agent_name},
+            w.serving_endpoints.create(
+                name=ep_name,
+                config=EndpointCoreConfigInput(
+                    served_entities=[served_entity],
+                    traffic_config=traffic,
+                ),
+                tags=endpoint_tags,
             )
-        except Exception as e:
-            if "Invalid secret" in str(e):
-                logger.info(f"Secret refs not supported, using runtime scope resolution for {ep_name}")
-                agents.deploy(
-                    model_name=model_name,
-                    model_version=int(version),
-                    endpoint_name=ep_name,
-                    scale_to_zero=scale_to_zero,
-                    environment_vars=deploy_env_vars or env_vars,
-                    tags={"app": app_name, "agent": agent_name},
-                )
-            else:
-                raise
+        except ResourceAlreadyExists:
+            logger.info(f"Endpoint {ep_name} exists, updating config")
+            w.serving_endpoints.update_config(
+                name=ep_name,
+                served_entities=[served_entity],
+                traffic_config=traffic,
+            )
 
         # Wait for endpoint to be READY before patching config
         _wait_for_endpoint_ready(w, ep_name)
         _configure_ai_gateway(w, ep_name, config)
         _patch_endpoint_env_vars(w, ep_name, ep_env)
-
-        try:
-            agents.enable_trace_reviews(endpoint_name=ep_name)
-        except Exception:
-            pass
 
         return agent_name, ep_name
 
