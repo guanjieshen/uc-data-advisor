@@ -117,6 +117,7 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
             w.serving_endpoints.create(
                 name=ep_name,
                 config=EndpointCoreConfigInput(
+                    name=ep_name,
                     served_entities=[served_entity],
                     traffic_config=traffic,
                 ),
