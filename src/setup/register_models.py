@@ -1,17 +1,16 @@
 """Register each agent as a model in Unity Catalog.
 
 Uses mlflow.pyfunc.save_model() for local artifact packaging (no network),
-then uploads to a UC Volume via the Files API and creates the model version
-via the UC REST API. No MLflow tracking, registry client, or artifact
-upload pipeline involved — all registration goes through the Databricks SDK
-and UC REST endpoints.
+then uploads to a UC Volume via the Files API. Model version creation uses
+MlflowClient (the only supported way to create UC model versions — the
+Databricks SDK does not expose this). No MLflow tracking, experiments, runs,
+or logged models are created.
 """
 
 import os
 import logging
 import textwrap
 import tempfile
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
@@ -37,8 +36,9 @@ VOLUME_NAME = "model_artifacts"
 
 
 def register_agent_models(config: dict, w) -> dict:
-    """Package and register all agent models in UC via Volume upload + REST API."""
+    """Package and register all agent models in UC via Volume upload + MlflowClient."""
     import mlflow.pyfunc
+    from mlflow import MlflowClient
     from databricks.sdk.service.catalog import VolumeType
     from databricks.sdk.errors import ResourceAlreadyExists
 
@@ -71,6 +71,17 @@ def register_agent_models(config: dict, w) -> dict:
     # Set config path so agents don't warn during save_model validation
     config_path = os.path.abspath(config.get("_config_path", "config/advisor_config.yaml"))
     os.environ.setdefault("ADVISOR_CONFIG_PATH", config_path)
+
+    # MlflowClient for UC model version creation (SDK doesn't expose this)
+    if not os.environ.get("DATABRICKS_HOST"):
+        os.environ["DATABRICKS_HOST"] = w.config.host
+    if not os.environ.get("DATABRICKS_TOKEN"):
+        headers = w.config.authenticate()
+        bearer = headers.get("Authorization", "")
+        if bearer.startswith("Bearer "):
+            os.environ["DATABRICKS_TOKEN"] = bearer[len("Bearer "):]
+    os.environ.pop("DATABRICKS_CONFIG_PROFILE", None)
+    uc_client = MlflowClient(registry_uri="databricks-uc")
 
     # Ensure model artifacts volume exists
     try:
@@ -114,22 +125,17 @@ def register_agent_models(config: dict, w) -> dict:
 
                 # 3. Create registered model (if not exists)
                 try:
-                    w.registered_models.create(
-                        catalog_name=catalog, schema_name=schema, name=model_short,
-                    )
-                except ResourceAlreadyExists:
-                    pass
+                    uc_client.create_registered_model(model_fqn)
+                except Exception as e:
+                    if "ALREADY_EXISTS" not in str(e) and "RESOURCE_ALREADY_EXISTS" not in str(e):
+                        raise
 
-                # 4. Create model version from Volume source via UC REST API
-                resp = w.api_client.do(
-                    "POST",
-                    "/api/2.0/mlflow/unity-catalog/model-versions/create",
-                    body={"name": model_fqn, "source": volume_path},
+                # 4. Create model version from Volume source
+                mv = uc_client.create_model_version(
+                    name=model_fqn,
+                    source=volume_path,
                 )
-                version = str(resp["model_version"]["version"])
-
-                # 5. Finalize model version
-                _finalize_model_version(w, model_fqn, version)
+                version = str(mv.version)
 
             return agent_name, {
                 "model_name": model_fqn,
@@ -168,26 +174,3 @@ def _upload_directory(w, local_dir: str, volume_base: str) -> None:
                 w.files.upload(remote_path, f, overwrite=True)
 
 
-def _finalize_model_version(w, model_fqn: str, version: str, timeout: int = 300) -> None:
-    """Finalize a model version and wait for READY status."""
-    w.api_client.do(
-        "POST",
-        "/api/2.0/mlflow/unity-catalog/model-versions/finalize",
-        body={"name": model_fqn, "version": version},
-    )
-
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        resp = w.api_client.do(
-            "GET",
-            "/api/2.0/mlflow/unity-catalog/model-versions/get",
-            query={"name": model_fqn, "version": version},
-        )
-        status = resp.get("model_version", resp).get("status", "")
-        if status == "READY":
-            return
-        if status == "FAILED_REGISTRATION":
-            raise RuntimeError(f"Model version {model_fqn} v{version} failed registration")
-        time.sleep(5)
-
-    raise TimeoutError(f"Model version {model_fqn} v{version} did not reach READY in {timeout}s")
