@@ -126,9 +126,6 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
         _configure_ai_gateway(w, ep_name, config)
         _patch_endpoint_env_vars(w, ep_name, ep_env)
 
-        # Register with Review App for feedback collection + trace reviews
-        _register_review_app(model_name, int(version), ep_name, scale_to_zero, full_env)
-
         return agent_name, ep_name
 
     # Deploy sub-agents first (parallel), then orchestrator (needs their endpoint names)
@@ -168,11 +165,22 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     print(f"  Deployed {len(endpoints)}/{len(registered)} agent endpoints")
     print("  Note: run '--step grant-agent-permissions' after endpoints are READY")
 
-    # Print Review App URLs
+    # Phase 3: Register all deployed endpoints with the Review App
     if endpoints:
         print()
-        print("  Review App URLs:")
+        print("  Registering Review App (feedback + trace reviews)...")
         for agent_name, ep_name in endpoints.items():
+            model_info = registered.get(agent_name, {})
+            ep_env = secret_env_vars
+            if agent_name == "orchestrator":
+                ep_env = dict(env_vars)
+                for sub_name, sub_ep in endpoints.items():
+                    if sub_name != "orchestrator":
+                        ep_env[f"{sub_name.upper()}_AGENT_ENDPOINT"] = sub_ep
+            _register_review_app(
+                model_info["model_name"], int(model_info["version"]),
+                ep_name, scale_to_zero, ep_env,
+            )
             print(f"    [{agent_name}] {workspace_host}/ml/review/{ep_name}")
 
     return endpoints
