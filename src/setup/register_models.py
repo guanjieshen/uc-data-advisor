@@ -91,7 +91,8 @@ def register_agent_models(config: dict, w) -> dict:
 
     def _register_one(agent_name):
         module_name, class_name = AGENT_DEFS[agent_name]
-        model_name = f"{catalog}.{schema}.{app_name.replace('-', '_')}_{agent_name}_agent"
+        model_short = f"{app_name.replace('-', '_')}_{agent_name}_agent"
+        model_name = f"{catalog}.{schema}.{model_short}"
 
         model_def_code = MODEL_DEF_TEMPLATE.format(module=module_name, class_name=class_name)
         model_def_path = os.path.join(app_dir, f"{agent_name}_model.py")
@@ -104,10 +105,16 @@ def register_agent_models(config: dict, w) -> dict:
             # log_model's internal registration uses the external location's
             # credential instead of the metastore's default credential.
             if storage_location:
+                create_body = {
+                    "catalog_name": catalog,
+                    "schema_name": schema,
+                    "name": model_short,
+                    "storage_location": storage_location,
+                }
                 try:
                     w.api_client.do(
                         "POST", "/api/2.1/unity-catalog/models",
-                        body={"name": model_name, "storage_location": storage_location},
+                        body=create_body,
                     )
                 except Exception as e:
                     if "ALREADY_EXISTS" not in str(e):
