@@ -91,8 +91,8 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
 
         _wait_for_endpoint_ready(w, ep_name)
 
-        # Build served entity — name mirrors agents SDK pattern
-        served_entity_name = f"{model_name.replace('.', '_')}_{version}"[:63]
+        # Served entity name: alphanumeric + dashes only, max 63 chars
+        served_entity_name = f"{app_name}-{agent_name}-v{version}"
 
         served_entity = ServedEntityInput(
             name=served_entity_name,
