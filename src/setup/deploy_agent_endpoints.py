@@ -45,25 +45,13 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     source_catalogs = ",".join(config.get("source_catalogs", []))
     scale_to_zero = config.get("scale_to_zero", True)
 
-    # Resolve SP credentials from secret scope at deploy time
-    sp_client_id = ""
-    sp_client_secret = ""
-    scope_exists = False
-    if scope:
-        try:
-            import base64
-            raw_id = w.secrets.get_secret(scope=scope, key="sp-client-id").value or ""
-            raw_secret = w.secrets.get_secret(scope=scope, key="sp-client-secret").value or ""
-            sp_client_id = base64.b64decode(raw_id).decode() if raw_id else ""
-            sp_client_secret = base64.b64decode(raw_secret).decode() if raw_secret else ""
-            scope_exists = True
-        except Exception as e:
-            logger.warning(f"Could not read secrets from scope '{scope}': {e}")
+    # Ensure secret scope exists and has SP credentials.
+    # Endpoints always deploy with SP credentials via {{secrets/...}} refs.
+    sp_client_id = config.get("service_principal", "")
+    _ensure_secret_scope(w, scope, sp_client_id)
 
     env_vars = {
         "DATABRICKS_HOST": workspace_host,
-        "DATABRICKS_CLIENT_ID": sp_client_id,
-        "DATABRICKS_CLIENT_SECRET": sp_client_secret,
         "SERVING_ENDPOINT": infra.get("serving_endpoint", ""),
         "GENIE_SPACE_ID": infra.get("genie_space_id", ""),
         "VS_INDEX_METADATA": infra.get("vs_index_metadata", ""),
@@ -72,11 +60,10 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     }
     env_vars = {k: v for k, v in env_vars.items() if v}
 
-    # Use {{secrets/...}} refs if the scope exists (resolved at endpoint runtime)
+    # SP credentials resolved at endpoint runtime via secret refs
     secret_env_vars = dict(env_vars)
-    if scope_exists:
-        secret_env_vars["DATABRICKS_CLIENT_ID"] = "{{secrets/" + scope + "/sp-client-id}}"
-        secret_env_vars["DATABRICKS_CLIENT_SECRET"] = "{{secrets/" + scope + "/sp-client-secret}}"
+    secret_env_vars["DATABRICKS_CLIENT_ID"] = "{{secrets/" + scope + "/sp-client-id}}"
+    secret_env_vars["DATABRICKS_CLIENT_SECRET"] = "{{secrets/" + scope + "/sp-client-secret}}"
 
     def _deploy_one(agent_name, model_info, deploy_env_vars=None):
         ep_name = f"{app_name}-{agent_name}-agent"
@@ -290,6 +277,48 @@ def _wait_for_endpoint_ready(w, ep_name: str, timeout: int = 600):
         except Exception:
             return
     print()
+
+
+def _ensure_secret_scope(w, scope: str, sp_client_id: str) -> None:
+    """Ensure the secret scope exists with SP credentials.
+
+    Creates the scope if missing. If the scope exists but secrets are absent
+    (e.g. provision step was skipped), generates new SP OAuth credentials
+    and stores them.
+    """
+    # Create scope if it doesn't exist
+    try:
+        w.secrets.create_scope(scope=scope)
+        print(f"  Created secret scope: {scope}")
+    except Exception as e:
+        if "already exists" not in str(e).lower():
+            raise
+
+    # Check if secrets already exist
+    try:
+        w.secrets.get_secret(scope=scope, key="sp-client-id")
+        return  # secrets exist, nothing to do
+    except Exception:
+        pass
+
+    if not sp_client_id:
+        logger.warning(f"No service_principal configured — scope '{scope}' has no SP credentials")
+        return
+
+    # Look up SP and generate OAuth secret
+    try:
+        from databricks.sdk.service.iam import ListServicePrincipalsRequest
+        sps = list(w.service_principals.list(filter=f"applicationId eq '{sp_client_id}'"))
+        if not sps:
+            logger.warning(f"Service principal {sp_client_id} not found — cannot generate credentials")
+            return
+        sp_id = sps[0].id
+        secret_resp = w.service_principal_secrets_proxy.create(service_principal_id=sp_id)
+        w.secrets.put_secret(scope=scope, key="sp-client-id", string_value=sp_client_id)
+        w.secrets.put_secret(scope=scope, key="sp-client-secret", string_value=secret_resp.secret)
+        print(f"  Generated and stored SP credentials in scope: {scope}")
+    except Exception as e:
+        logger.warning(f"Could not generate SP credentials for scope '{scope}': {e}")
 
 
 def _grant_endpoint_permissions(w, infra, config, endpoints, sp):
