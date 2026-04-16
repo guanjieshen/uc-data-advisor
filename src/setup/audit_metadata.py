@@ -209,7 +209,10 @@ def _get_sp_client(config: dict, w):
             client_id = base64.b64decode(raw_id).decode() if raw_id else ""
             client_secret = base64.b64decode(raw_secret).decode() if raw_secret else ""
             if host and client_id and client_secret:
-                return WorkspaceClient(host=host, client_id=client_id, client_secret=client_secret)
+                return WorkspaceClient(
+                    host=host, client_id=client_id, client_secret=client_secret,
+                    token=None, profile=None,
+                )
         except Exception as e:
             logger.warning(f"Could not authenticate as SP from scope: {e}")
 
