@@ -47,13 +47,28 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     scale_to_zero = config.get("scale_to_zero", True)
 
     # Ensure secret scope exists and has SP credentials.
-    # Endpoints always deploy with SP credentials via {{secrets/...}} refs.
     from .provision_infrastructure import ensure_secret_scope
     sp_client_id = config.get("service_principal", "")
     ensure_secret_scope(w, scope, sp_client_id)
 
+    # Read SP credentials from scope for endpoint env vars.
+    # Use resolved values rather than {{secrets/...}} refs to avoid
+    # dependency on the endpoint's service identity having scope READ access.
+    sp_client_secret = ""
+    if scope:
+        try:
+            import base64
+            raw_id = w.secrets.get_secret(scope=scope, key="sp-client-id").value or ""
+            raw_secret = w.secrets.get_secret(scope=scope, key="sp-client-secret").value or ""
+            sp_client_id = base64.b64decode(raw_id).decode() if raw_id else sp_client_id
+            sp_client_secret = base64.b64decode(raw_secret).decode() if raw_secret else ""
+        except Exception as e:
+            logger.warning(f"Could not read secrets from scope '{scope}': {e}")
+
     env_vars = {
         "DATABRICKS_HOST": workspace_host,
+        "DATABRICKS_CLIENT_ID": sp_client_id,
+        "DATABRICKS_CLIENT_SECRET": sp_client_secret,
         "SERVING_ENDPOINT": infra.get("serving_endpoint", ""),
         "GENIE_SPACE_ID": infra.get("genie_space_id", ""),
         "VS_INDEX_METADATA": infra.get("vs_index_metadata", ""),
@@ -62,16 +77,11 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     }
     env_vars = {k: v for k, v in env_vars.items() if v}
 
-    # SP credentials resolved at endpoint runtime via secret refs
-    secret_env_vars = dict(env_vars)
-    secret_env_vars["DATABRICKS_CLIENT_ID"] = "{{secrets/" + scope + "/sp-client-id}}"
-    secret_env_vars["DATABRICKS_CLIENT_SECRET"] = "{{secrets/" + scope + "/sp-client-secret}}"
-
     def _deploy_one(agent_name, model_info, deploy_env_vars=None):
         ep_name = f"{app_name}-{agent_name}-agent"
         model_name = model_info["model_name"]
         version = str(model_info["version"])
-        ep_env = deploy_env_vars or secret_env_vars
+        ep_env = deploy_env_vars or env_vars
 
         # Add static env vars that agents.deploy() used to inject
         full_env = dict(ep_env)
@@ -171,9 +181,8 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
         print("  Registering Review App (feedback + trace reviews)...")
         for agent_name, ep_name in endpoints.items():
             model_info = registered.get(agent_name, {})
-            ep_env = secret_env_vars
+            ep_env = dict(env_vars)
             if agent_name == "orchestrator":
-                ep_env = dict(env_vars)
                 for sub_name, sub_ep in endpoints.items():
                     if sub_name != "orchestrator":
                         ep_env[f"{sub_name.upper()}_AGENT_ENDPOINT"] = sub_ep
