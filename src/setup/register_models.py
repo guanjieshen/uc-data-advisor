@@ -153,6 +153,14 @@ def register_agent_models(config: dict, w) -> dict:
                 logger.error(f"Failed to register {agent_name}: {e}", exc_info=True)
 
     print(f"  Registered {len(registered)}/{len(AGENTS)} models")
+
+    # Print workspace URLs (MLflow prints local proxy URLs which aren't reachable)
+    host = config.get("workspace", {}).get("host", w.config.host or "")
+    if host and registered:
+        experiment = mlflow.get_experiment_by_name(f"/uc-data-advisor-{app_name}-traces")
+        if experiment:
+            print(f"  Experiment: {host}/ml/experiments/{experiment.experiment_id}")
+
     return registered
 
 
