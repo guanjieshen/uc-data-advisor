@@ -128,7 +128,11 @@ def register_agent_models(config: dict, w) -> dict:
                 # 3. Create registered model via UC REST API (if not exists)
                 #    storage_location routes artifact storage to the external
                 #    location's credential instead of the metastore's default.
-                create_body = {"name": model_fqn}
+                create_body = {
+                    "catalog_name": catalog,
+                    "schema_name": schema,
+                    "name": model_short,
+                }
                 if storage_location:
                     create_body["storage_location"] = storage_location
                 try:
