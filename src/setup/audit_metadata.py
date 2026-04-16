@@ -191,10 +191,16 @@ def audit(config: dict, w) -> dict:
 def _get_sp_client(config: dict, w):
     """Create a WorkspaceClient authenticated as the configured SP."""
     from databricks.sdk import WorkspaceClient
+    from .provision_infrastructure import ensure_secret_scope
 
     infra = config.get("infrastructure", {})
     host = config.get("workspace", {}).get("host", "")
     scope = infra.get("secret_scope", "")
+    sp_client_id = config.get("service_principal", "")
+
+    # Ensure scope and SP credentials exist before reading
+    if scope and sp_client_id:
+        ensure_secret_scope(w, scope, sp_client_id)
 
     if scope:
         try:
