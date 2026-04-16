@@ -1,8 +1,9 @@
 """Deploy registered agent models as serving endpoints via the Databricks SDK.
 
 Creates or updates Model Serving endpoints directly through the REST API,
-avoiding the agents.deploy() artifact-download path that bypasses Unity Catalog.
-Deploys sub-agents in parallel, then the orchestrator.
+then registers with the Databricks Review App via agents.deploy() for
+feedback collection and trace review. Deploys sub-agents in parallel,
+then the orchestrator.
 """
 
 import time
@@ -125,6 +126,9 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
         _configure_ai_gateway(w, ep_name, config)
         _patch_endpoint_env_vars(w, ep_name, ep_env)
 
+        # Register with Review App for feedback collection + trace reviews
+        _register_review_app(model_name, int(version), ep_name, scale_to_zero, full_env)
+
         return agent_name, ep_name
 
     # Deploy sub-agents first (parallel), then orchestrator (needs their endpoint names)
@@ -205,6 +209,34 @@ def grant_agent_permissions(config: dict, w) -> None:
         print(f"\r  Timed out waiting for endpoints ({int(time.time() - start)}s){' ' * 20}")
 
     _grant_endpoint_permissions(w, infra, config, endpoints, sp)
+
+
+def _register_review_app(model_name: str, version: int, ep_name: str,
+                         scale_to_zero: bool, env_vars: dict) -> None:
+    """Register an endpoint with the Databricks Review App.
+
+    Calls agents.deploy() which internally:
+    1. Downloads MLmodel file to validate the model (requires storage access
+       — works because storage_location routes to external location credential)
+    2. Detects the endpoint already exists and skips endpoint creation
+    3. Registers with the Review App backend (assessment logs, review UI)
+    4. Enables trace reviews
+
+    This is a best-effort operation — deployment succeeds even if Review App
+    registration fails (e.g. if storage access is unavailable).
+    """
+    try:
+        from databricks import agents
+        agents.deploy(
+            model_name=model_name,
+            model_version=version,
+            endpoint_name=ep_name,
+            scale_to_zero=scale_to_zero,
+            environment_vars=env_vars,
+        )
+        logger.info(f"Review App registered for {ep_name}")
+    except Exception as e:
+        logger.warning(f"Review App registration skipped for {ep_name}: {e}")
 
 
 def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):
