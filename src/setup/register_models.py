@@ -77,6 +77,14 @@ def register_agent_models(config: dict, w) -> dict:
     config_path = os.path.abspath(config.get("_config_path", "config/advisor_config.yaml"))
     os.environ.setdefault("ADVISOR_CONFIG_PATH", config_path)
 
+    # Resolve storage location from external_location config.
+    # When set, registered models use this storage credential instead of
+    # the metastore's default credential — avoids AuthorizationFailure on
+    # managed storage when the metastore credential is misconfigured.
+    storage_location = _resolve_storage_location(w, config)
+    if storage_location:
+        print(f"  Model storage: {storage_location}")
+
     print("=" * 60)
     print("Registering Agent Models (parallel)")
     print("=" * 60)
@@ -92,6 +100,19 @@ def register_agent_models(config: dict, w) -> dict:
             f.write(model_def_code)
 
         try:
+            # Pre-create the registered model with storage_location so
+            # log_model's internal registration uses the external location's
+            # credential instead of the metastore's default credential.
+            if storage_location:
+                try:
+                    w.api_client.do(
+                        "POST", "/api/2.1/unity-catalog/models",
+                        body={"name": model_name, "storage_location": storage_location},
+                    )
+                except Exception as e:
+                    if "ALREADY_EXISTS" not in str(e):
+                        raise
+
             with mlflow.start_run(run_name=f"register_{agent_name}_agent"):
                 model_info = mlflow.pyfunc.log_model(
                     name=f"{agent_name}_agent",
@@ -125,3 +146,24 @@ def register_agent_models(config: dict, w) -> dict:
 
     print(f"  Registered {len(registered)}/{len(AGENTS)} models")
     return registered
+
+
+def _resolve_storage_location(w, config: dict) -> str:
+    """Resolve the storage URL from external_location config or source catalogs."""
+    ext_loc_name = config.get("external_location", "")
+    if ext_loc_name:
+        try:
+            ext_loc = w.external_locations.get(ext_loc_name)
+            return ext_loc.url
+        except Exception:
+            pass
+
+    source_catalogs = config.get("source_catalogs", [])
+    for sc in source_catalogs:
+        try:
+            sc_info = w.catalogs.get(sc)
+            if getattr(sc_info, "storage_root", None):
+                return sc_info.storage_root
+        except Exception:
+            continue
+    return ""
