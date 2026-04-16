@@ -54,6 +54,7 @@ def register_agent_models(config: dict, w) -> dict:
             os.environ["DATABRICKS_TOKEN"] = bearer[len("Bearer "):]
     os.environ.pop("DATABRICKS_CONFIG_PROFILE", None)
 
+    mlflow.set_tracking_uri("databricks")
     mlflow.set_registry_uri("databricks-uc")
     mlflow.set_experiment(f"/uc-data-advisor-{app_name}-traces")
 
