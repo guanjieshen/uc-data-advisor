@@ -46,17 +46,17 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     scale_to_zero = config.get("scale_to_zero", True)
 
     # Resolve SP credentials from secret scope at deploy time
-    # Tries {{secrets/...}} interpolation first; falls back to reading scope values directly
     sp_client_id = ""
     sp_client_secret = ""
+    scope_exists = False
     if scope:
         try:
             import base64
             raw_id = w.secrets.get_secret(scope=scope, key="sp-client-id").value or ""
             raw_secret = w.secrets.get_secret(scope=scope, key="sp-client-secret").value or ""
-            # SDK returns base64-encoded values
             sp_client_id = base64.b64decode(raw_id).decode() if raw_id else ""
             sp_client_secret = base64.b64decode(raw_secret).decode() if raw_secret else ""
+            scope_exists = True
         except Exception as e:
             logger.warning(f"Could not read secrets from scope '{scope}': {e}")
 
@@ -72,10 +72,11 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
     }
     env_vars = {k: v for k, v in env_vars.items() if v}
 
-    # Also try {{secrets/...}} refs — preferred if the workspace supports it
+    # Use {{secrets/...}} refs if the scope exists (resolved at endpoint runtime)
     secret_env_vars = dict(env_vars)
-    secret_env_vars["DATABRICKS_CLIENT_ID"] = "{{secrets/" + scope + "/sp-client-id}}"
-    secret_env_vars["DATABRICKS_CLIENT_SECRET"] = "{{secrets/" + scope + "/sp-client-secret}}"
+    if scope_exists:
+        secret_env_vars["DATABRICKS_CLIENT_ID"] = "{{secrets/" + scope + "/sp-client-id}}"
+        secret_env_vars["DATABRICKS_CLIENT_SECRET"] = "{{secrets/" + scope + "/sp-client-secret}}"
 
     def _deploy_one(agent_name, model_info, deploy_env_vars=None):
         ep_name = f"{app_name}-{agent_name}-agent"
