@@ -79,8 +79,12 @@ def provision(config: dict, w) -> dict:
     # Step 5: Create Genie Space
     infra["genie_space_id"] = _create_genie_space(w, infra, app_name, config)
 
-    # Step 6: Generate OAuth secret for configured SP + store in secret scope
-    _store_sp_secrets(w, infra, sp)
+    # Step 6: Ensure secret scope with SP credentials
+    scope_name = infra.get("secret_scope", app_name)
+    infra["secret_scope"] = scope_name
+    ensure_secret_scope(w, scope_name, sp)
+    # Grant workspace-access entitlement for SP
+    _ensure_sp_entitlement(w, sp)
 
     print()
     print("=" * 60)
@@ -251,83 +255,75 @@ def _create_genie_space(w, infra: dict, app_name: str, config: dict) -> str:
 # Step 6: SP OAuth secrets
 # ---------------------------------------------------------------------------
 
-def _store_sp_secrets(w, infra: dict, sp_client_id: str) -> None:
-    """Generate OAuth secret for the configured SP and store in a Databricks secret scope."""
-    app_name = infra.get("app_name", "uc-data-advisor")
-    scope_name = infra.get("secret_scope", app_name)
-    infra["secret_scope"] = scope_name
-
-    if infra.get("sp_secrets_stored"):
-        print(f"  [secrets] Using existing scope: {scope_name}")
+def _ensure_sp_entitlement(w, sp_client_id: str) -> None:
+    """Grant workspace-access entitlement to the configured SP."""
+    if not sp_client_id:
         return
-
-    print(f"  [secrets] Setting up OAuth for SP {sp_client_id[:20]}...", end=" ", flush=True)
-
-    # Look up the SP to get its internal numeric ID
-    sp_id = None
     try:
-        for sp in w.service_principals.list():
-            if sp.application_id == sp_client_id:
-                sp_id = sp.id
-                break
-    except Exception as e:
-        print(f"FAILED to list SPs: {e}")
-        return
-
-    if not sp_id:
-        print(f"FAILED: SP '{sp_client_id}' not found in workspace")
-        return
-
-    print(f"found (id={sp_id})", end=" ", flush=True)
-
-    # Grant workspace-access entitlement
-    try:
+        sps = list(w.service_principals.list(filter=f"applicationId eq '{sp_client_id}'"))
+        if not sps:
+            return
         from databricks.sdk.service.iam import PatchOp, Patch, PatchSchema
         w.service_principals.patch(
-            id=str(sp_id),
+            id=str(sps[0].id),
             operations=[Patch(op=PatchOp.ADD, path="entitlements", value=[{"value": "workspace-access"}])],
             schemas=[PatchSchema.URN_IETF_PARAMS_SCIM_API_MESSAGES_2_0_PATCH_OP],
         )
-        print("entitled", end=" ", flush=True)
     except Exception as e:
         logger.warning(f"Failed to set workspace-access entitlement: {e}")
 
-    # Generate OAuth secret
+
+# ---------------------------------------------------------------------------
+# Ensure secret scope (used by provision + deploy-agents)
+# ---------------------------------------------------------------------------
+
+def ensure_secret_scope(w, scope: str, sp_client_id: str) -> None:
+    """Ensure the secret scope exists with SP credentials.
+
+    Creates the scope if missing. If the scope exists but secrets are absent
+    (e.g. provision step was skipped), generates new SP OAuth credentials
+    and stores them. Safe to call from any pipeline step.
+    """
+    # Create scope if it doesn't exist
     try:
-        secret_resp = w.service_principal_secrets_proxy.create(service_principal_id=sp_id)
+        w.secrets.create_scope(scope=scope)
+        print(f"  Created secret scope: {scope}")
     except Exception as e:
-        print(f"secret failed: {e}")
+        if "already exists" not in str(e).lower():
+            raise
+
+    # Check if secrets already exist
+    try:
+        w.secrets.get_secret(scope=scope, key="sp-client-id")
+        return  # secrets exist, nothing to do
+    except Exception:
+        pass
+
+    if not sp_client_id:
+        logger.warning(f"No service_principal configured — scope '{scope}' has no SP credentials")
         return
 
-    # Create secret scope (idempotent)
+    # Look up SP and generate OAuth secret
     try:
-        w.secrets.create_scope(scope=scope_name)
-        print("scope created", end=" ", flush=True)
-    except Exception as e:
-        if "already exists" in str(e).lower():
-            print("scope exists", end=" ", flush=True)
-        else:
-            print(f"scope failed: {e}")
+        sps = list(w.service_principals.list(filter=f"applicationId eq '{sp_client_id}'"))
+        if not sps:
+            logger.warning(f"Service principal {sp_client_id} not found — cannot generate credentials")
             return
+        sp_id = sps[0].id
+        secret_resp = w.service_principal_secrets_proxy.create(service_principal_id=sp_id)
+        w.secrets.put_secret(scope=scope, key="sp-client-id", string_value=sp_client_id)
+        w.secrets.put_secret(scope=scope, key="sp-client-secret", string_value=secret_resp.secret)
 
-    # Store client_id + secret in scope
-    try:
-        w.secrets.put_secret(scope=scope_name, key="sp-client-id", string_value=sp_client_id)
-        w.secrets.put_secret(scope=scope_name, key="sp-client-secret", string_value=secret_resp.secret)
-        infra["sp_secrets_stored"] = True
-        print("secrets stored", end=" ", flush=True)
-    except Exception as e:
-        print(f"put_secret failed: {e}")
-        return
+        # Grant READ on scope to the SP (for runtime secret resolution)
+        try:
+            from databricks.sdk.service.workspace import AclPermission
+            w.secrets.put_acl(scope=scope, principal=sp_client_id, permission=AclPermission.READ)
+        except Exception:
+            pass
 
-    # Grant READ on scope to the configured SP (for runtime secret resolution)
-    try:
-        from databricks.sdk.service.workspace import AclPermission
-        w.secrets.put_acl(scope=scope_name, principal=sp_client_id, permission=AclPermission.READ)
-        print("ACL granted")
+        print(f"  Generated and stored SP credentials in scope: {scope}")
     except Exception as e:
-        logger.warning(f"Failed to grant scope ACL: {e}")
-        print("(ACL grant skipped)")
+        logger.warning(f"Could not generate SP credentials for scope '{scope}': {e}")
 
 
 # ---------------------------------------------------------------------------
