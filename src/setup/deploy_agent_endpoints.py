@@ -167,6 +167,14 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
 
     print(f"  Deployed {len(endpoints)}/{len(registered)} agent endpoints")
     print("  Note: run '--step grant-agent-permissions' after endpoints are READY")
+
+    # Print Review App URLs
+    if endpoints:
+        print()
+        print("  Review App URLs:")
+        for agent_name, ep_name in endpoints.items():
+            print(f"    [{agent_name}] {workspace_host}/ml/review/{ep_name}")
+
     return endpoints
 
 
