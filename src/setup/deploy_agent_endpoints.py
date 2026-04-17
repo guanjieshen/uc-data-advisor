@@ -186,11 +186,14 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
                 for sub_name, sub_ep in endpoints.items():
                     if sub_name != "orchestrator":
                         ep_env[f"{sub_name.upper()}_AGENT_ENDPOINT"] = sub_ep
-            _register_review_app(
+            review_url = _register_review_app(
                 model_info["model_name"], int(model_info["version"]),
                 ep_name, scale_to_zero, ep_env,
             )
-            print(f"    [{agent_name}] {workspace_host}/ml/review/{ep_name}")
+            if review_url:
+                print(f"    [{agent_name}] {review_url}")
+            else:
+                print(f"    [{agent_name}] skipped")
 
     return endpoints
 
@@ -237,7 +240,7 @@ def grant_agent_permissions(config: dict, w) -> None:
 
 
 def _register_review_app(model_name: str, version: int, ep_name: str,
-                         scale_to_zero: bool, env_vars: dict) -> None:
+                         scale_to_zero: bool, env_vars: dict) -> str:
     """Register an endpoint with the Databricks Review App.
 
     Calls agents.deploy() which internally:
@@ -247,21 +250,23 @@ def _register_review_app(model_name: str, version: int, ep_name: str,
     3. Registers with the Review App backend (assessment logs, review UI)
     4. Enables trace reviews
 
+    Returns the Review App URL, or empty string if registration failed.
     This is a best-effort operation — deployment succeeds even if Review App
     registration fails (e.g. if storage access is unavailable).
     """
     try:
         from databricks import agents
-        agents.deploy(
+        deployment = agents.deploy(
             model_name=model_name,
             model_version=version,
             endpoint_name=ep_name,
             scale_to_zero=scale_to_zero,
             environment_vars=env_vars,
         )
-        logger.info(f"Review App registered for {ep_name}")
+        return getattr(deployment, "review_app_url", "")
     except Exception as e:
         logger.warning(f"Review App registration skipped for {ep_name}: {e}")
+        return ""
 
 
 def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):
