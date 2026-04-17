@@ -209,10 +209,18 @@ def _get_sp_client(config: dict, w):
             client_id = base64.b64decode(raw_id).decode() if raw_id else ""
             client_secret = base64.b64decode(raw_secret).decode() if raw_secret else ""
             if host and client_id and client_secret:
-                return WorkspaceClient(
-                    host=host, client_id=client_id, client_secret=client_secret,
-                    token=None, profile=None,
-                )
+                # Temporarily clear env vars that conflict with OAuth M2M auth
+                saved_token = os.environ.pop("DATABRICKS_TOKEN", None)
+                saved_profile = os.environ.pop("DATABRICKS_CONFIG_PROFILE", None)
+                try:
+                    return WorkspaceClient(
+                        host=host, client_id=client_id, client_secret=client_secret,
+                    )
+                finally:
+                    if saved_token:
+                        os.environ["DATABRICKS_TOKEN"] = saved_token
+                    if saved_profile:
+                        os.environ["DATABRICKS_CONFIG_PROFILE"] = saved_profile
         except Exception as e:
             logger.warning(f"Could not authenticate as SP from scope: {e}")
 
