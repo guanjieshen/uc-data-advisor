@@ -40,6 +40,9 @@ def deploy(config: dict, w) -> None:
     # Step 5: Update Genie Space
     _deploy_genie_space(config, w)
 
+    # Step 6: Feedback tracking tables (idempotent — never drops existing data)
+    _deploy_feedback_tables(config, w, warehouse_id)
+
     print()
     print("=" * 60)
     print("Deployment complete")
@@ -288,6 +291,72 @@ def _deploy_genie_space(config, w):
         print("    Updated")
     except Exception as e:
         logger.warning(f"  [genie] Skipping — update failed ({len(genie_tables)} tables): {e}")
+
+
+# ---------------------------------------------------------------------------
+# Step 6: Feedback tracking tables
+# ---------------------------------------------------------------------------
+
+def _deploy_feedback_tables(config, w, warehouse_id):
+    """Create feedback tracking tables (conversations, messages, feedback).
+
+    Uses CREATE TABLE IF NOT EXISTS — feedback data must survive re-deployments.
+    """
+    infra = config.get("infrastructure", {})
+    catalog = infra["advisor_catalog"]
+    schema = infra.get("advisor_schema", "default")
+
+    print("  [feedback] Creating feedback tracking tables...")
+
+    tables = {
+        "conversations": f"""
+            CREATE TABLE IF NOT EXISTS {catalog}.{schema}.conversations (
+                conversation_id STRING NOT NULL,
+                teams_conversation_id STRING,
+                teams_user_id STRING,
+                teams_user_name STRING,
+                started_at TIMESTAMP,
+                last_activity_at TIMESTAMP,
+                message_count INT DEFAULT 0,
+                metadata_json STRING DEFAULT '{{}}'
+            ) USING DELTA
+        """,
+        "messages": f"""
+            CREATE TABLE IF NOT EXISTS {catalog}.{schema}.messages (
+                message_id STRING NOT NULL,
+                conversation_id STRING NOT NULL,
+                user_message STRING,
+                agent_response STRING,
+                intent STRING,
+                response_time_ms INT,
+                created_at TIMESTAMP,
+                teams_activity_id STRING,
+                request_id STRING,
+                error_text STRING
+            ) USING DELTA
+        """,
+        "feedback": f"""
+            CREATE TABLE IF NOT EXISTS {catalog}.{schema}.feedback (
+                feedback_id STRING NOT NULL,
+                message_id STRING NOT NULL,
+                conversation_id STRING NOT NULL,
+                rating STRING NOT NULL,
+                comment STRING,
+                teams_user_id STRING,
+                created_at TIMESTAMP
+            ) USING DELTA
+        """,
+    }
+
+    for name, ddl in tables.items():
+        try:
+            _run_sql(w, warehouse_id, ddl)
+            print(f"    {catalog}.{schema}.{name} — OK")
+        except Exception as e:
+            if "already exists" in str(e).lower():
+                print(f"    {catalog}.{schema}.{name} — already exists")
+            else:
+                logger.warning(f"    {name}: FAILED ({e})")
 
 
 # ---------------------------------------------------------------------------

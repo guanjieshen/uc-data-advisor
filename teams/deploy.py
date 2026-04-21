@@ -181,6 +181,9 @@ def deploy(config: dict) -> None:
          f"DATABRICKS_SP_CLIENT_ID={db.get('sp_client_id', '')}",
          f"DATABRICKS_SP_CLIENT_SECRET={db.get('sp_client_secret', '')}",
          f"SERVING_ENDPOINT_NAME={db['orchestrator_endpoint']}",
+         f"ADVISOR_CATALOG={db.get('advisor_catalog', '')}",
+         f"WAREHOUSE_ID={db.get('warehouse_id', '')}",
+         f"VS_INDEX_KNOWLEDGE={db.get('vs_index_knowledge', '')}",
          f"MicrosoftAppId={app_id}",
          f"MicrosoftAppPassword={client_secret}",
          "MicrosoftAppType=singletenant",
@@ -283,20 +286,24 @@ def teardown(config: dict) -> None:
 
 
 def _write_bot_app(bot_dir: str) -> None:
-    """Write the simplified bot app.py (no OAuth, uses SP)."""
-    app_code = '''"""UC Data Advisor Teams Bot — uses SP credentials directly."""
+    """Write the bot app.py with Adaptive Card feedback and auto-KB updates."""
+    app_code = '''"""UC Data Advisor Teams Bot — feedback-enabled with Adaptive Cards."""
 
 import os
 import sys
+import json
+import asyncio
 import logging
 import traceback
+import time as _time
 from http import HTTPStatus
+from uuid import uuid4
 
 from aiohttp import web
 from botbuilder.core import TurnContext, ActivityHandler
 from botbuilder.integration.aiohttp import CloudAdapter, ConfigurationBotFrameworkAuthentication
 from botbuilder.core.integration import aiohttp_error_middleware
-from botbuilder.schema import Activity, ActivityTypes
+from botbuilder.schema import Activity, ActivityTypes, Attachment
 
 from databricks.sdk import WorkspaceClient
 from config import DefaultConfig
@@ -307,7 +314,13 @@ logger = logging.getLogger(__name__)
 CONFIG = DefaultConfig()
 ADAPTER = CloudAdapter(ConfigurationBotFrameworkAuthentication(CONFIG))
 
+# In-memory state
+_conversations = {}   # teams_conversation_id -> conversation_id (UUID)
+_messages = {}        # message_id -> {user_message, agent_response}
+_kb_updates = {"count": 0, "reset_time": 0}
+
 _db_client = None
+
 
 def get_db_client():
     global _db_client
@@ -322,11 +335,30 @@ def get_db_client():
     return _db_client
 
 
-def query_orchestrator(message: str) -> str:
+def _esc(s):
+    """Escape strings for SQL single-quoted literals."""
+    if s is None:
+        return ""
+    return str(s).replace("\\\\", "\\\\\\\\").replace("'", "''")
+
+
+def _run_sql(statement):
+    """Execute SQL via Statements API. Returns None if WAREHOUSE_ID not set."""
+    wh = os.environ.get("WAREHOUSE_ID", "")
+    if not wh:
+        return None
+    w = get_db_client()
+    return w.statement_execution.execute_statement(
+        warehouse_id=wh, statement=statement, wait_timeout="30s",
+    )
+
+
+def query_orchestrator(message):
+    """Call the orchestrator endpoint. Returns (response_text, request_id)."""
     w = get_db_client()
     endpoint = os.environ.get("SERVING_ENDPOINT_NAME", "")
     if not endpoint:
-        return "SERVING_ENDPOINT_NAME not configured."
+        return "SERVING_ENDPOINT_NAME not configured.", None
     try:
         resp = w.api_client.do(
             "POST",
@@ -335,32 +367,352 @@ def query_orchestrator(message: str) -> str:
         )
     except Exception as e:
         logger.error(f"Orchestrator call failed: {e}")
-        return f"Sorry, I encountered an error: {str(e)[:200]}"
+        return f"Sorry, I encountered an error: {str(e)[:200]}", None
 
+    request_id = resp.get("request_id")
     for item in resp.get("output", []):
         if item.get("type") == "message":
             for c in item.get("content", []):
                 if c.get("type") == "output_text":
-                    return c.get("text", "")
-    return "I received your message but couldn\\'t generate a response."
+                    return c.get("text", ""), request_id
+    return "I received your message but could not generate a response.", request_id
 
+
+def _resolve_conversation_id(teams_conv_id):
+    """Get or create a stable conversation ID for a Teams conversation."""
+    if teams_conv_id not in _conversations:
+        _conversations[teams_conv_id] = str(uuid4())
+    return _conversations[teams_conv_id]
+
+
+def build_response_card(text, message_id):
+    """Build Adaptive Card with response text and feedback buttons."""
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.5",
+        "body": [
+            {"type": "TextBlock", "text": text, "wrap": True, "size": "Default"}
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "👍 Helpful",
+                "data": {"action": "feedback", "message_id": message_id, "rating": "positive"},
+            },
+            {
+                "type": "Action.Submit",
+                "title": "👎 Not helpful",
+                "data": {"action": "feedback", "message_id": message_id, "rating": "negative"},
+            },
+        ],
+    }
+
+
+def build_comment_card(message_id, conversation_id):
+    """Build Adaptive Card asking for correction text after negative feedback."""
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.5",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "Thanks for the feedback. What would have been a better answer?",
+                "wrap": True,
+            },
+            {
+                "type": "Input.Text",
+                "id": "comment_text",
+                "placeholder": "Your correction or suggestion...",
+                "isMultiline": True,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "Submit",
+                "data": {
+                    "action": "comment",
+                    "message_id": message_id,
+                    "conversation_id": conversation_id,
+                },
+            },
+        ],
+    }
+
+
+# ---- Async logging (fire-and-forget, never blocks response) ----
+
+async def _log_message(message_id, conversation_id, user_message, agent_response,
+                       response_time_ms, teams_activity_id=None, request_id=None,
+                       error_text=None):
+    catalog = os.environ.get("ADVISOR_CATALOG", "")
+    if not catalog:
+        return
+    try:
+        t = f"{catalog}.default"
+        err = "NULL" if not error_text else f"\\'{_esc(error_text)}\\'"
+        req = "NULL" if not request_id else f"\\'{_esc(request_id)}\\'"
+        act = "NULL" if not teams_activity_id else f"\\'{_esc(teams_activity_id)}\\'"
+        sql = (
+            f"INSERT INTO {t}.messages VALUES ("
+            f"\\'{_esc(message_id)}\\', \\'{_esc(conversation_id)}\\', "
+            f"\\'{_esc(user_message)}\\', \\'{_esc(agent_response)}\\', "
+            f"NULL, {response_time_ms}, current_timestamp(), "
+            f"{act}, {req}, {err})"
+        )
+        await asyncio.to_thread(_run_sql, sql)
+    except Exception as e:
+        logger.error(f"Failed to log message: {e}")
+
+
+async def _log_conversation(conversation_id, teams_conversation_id,
+                            teams_user_id, teams_user_name):
+    catalog = os.environ.get("ADVISOR_CATALOG", "")
+    if not catalog:
+        return
+    try:
+        t = f"{catalog}.default"
+        sql = (
+            f"MERGE INTO {t}.conversations AS target "
+            f"USING (SELECT \\'{_esc(conversation_id)}\\' AS conversation_id) AS source "
+            f"ON target.conversation_id = source.conversation_id "
+            f"WHEN MATCHED THEN UPDATE SET "
+            f"  last_activity_at = current_timestamp(), "
+            f"  message_count = message_count + 1 "
+            f"WHEN NOT MATCHED THEN INSERT "
+            f"  (conversation_id, teams_conversation_id, teams_user_id, "
+            f"   teams_user_name, started_at, last_activity_at, message_count) "
+            f"VALUES (\\'{_esc(conversation_id)}\\', \\'{_esc(teams_conversation_id)}\\', "
+            f"\\'{_esc(teams_user_id)}\\', \\'{_esc(teams_user_name)}\\', "
+            f"current_timestamp(), current_timestamp(), 1)"
+        )
+        await asyncio.to_thread(_run_sql, sql)
+    except Exception as e:
+        logger.error(f"Failed to log conversation: {e}")
+
+
+async def _log_feedback(feedback_id, message_id, conversation_id, rating,
+                        teams_user_id, comment=None):
+    catalog = os.environ.get("ADVISOR_CATALOG", "")
+    if not catalog:
+        return
+    try:
+        t = f"{catalog}.default"
+        cmt = "NULL" if not comment else f"\\'{_esc(comment)}\\'"
+        sql = (
+            f"INSERT INTO {t}.feedback VALUES ("
+            f"\\'{_esc(feedback_id)}\\', \\'{_esc(message_id)}\\', "
+            f"\\'{_esc(conversation_id)}\\', \\'{_esc(rating)}\\', "
+            f"{cmt}, \\'{_esc(teams_user_id)}\\', current_timestamp())"
+        )
+        await asyncio.to_thread(_run_sql, sql)
+    except Exception as e:
+        logger.error(f"Failed to log feedback: {e}")
+
+
+# ---- Auto-KB update (Phase 2: feedback loop closure) ----
+
+async def _auto_update_knowledge_base(user_message, agent_response, correction):
+    """Validate correction via LLM and auto-insert/update knowledge base."""
+    now = _time.time()
+    if now - _kb_updates["reset_time"] > 3600:
+        _kb_updates["count"] = 0
+        _kb_updates["reset_time"] = now
+    if _kb_updates["count"] >= 10:
+        logger.info("KB auto-update rate limit reached (10/hr)")
+        return
+
+    catalog = os.environ.get("ADVISOR_CATALOG", "")
+    vs_index = os.environ.get("VS_INDEX_KNOWLEDGE", "")
+    if not catalog:
+        return
+
+    prompt = (
+        "You are a data quality validator. Given the following interaction, "
+        "determine if the user correction is valid and generate a knowledge base entry.\\n\\n"
+        f"User question: {user_message}\\n"
+        f"Agent response: {agent_response}\\n"
+        f"User correction: {correction}\\n\\n"
+        "Return ONLY a JSON object: "
+        '{"question": "...", "answer": "...", "category": "...", '
+        '"is_valid": true, "confidence": 0.85}'
+    )
+
+    validation_text, _ = query_orchestrator(prompt)
+    try:
+        clean = validation_text.strip()
+        if clean.startswith("```"):
+            clean = clean.split("\\n", 1)[1].rsplit("```", 1)[0].strip()
+        result = json.loads(clean)
+    except (json.JSONDecodeError, IndexError, ValueError):
+        logger.warning(f"KB validation parse failed: {validation_text[:200]}")
+        return
+
+    if not result.get("is_valid") or result.get("confidence", 0) < 0.8:
+        logger.info(f"KB correction rejected: valid={result.get('is_valid')}, conf={result.get('confidence')}")
+        return
+
+    question = result["question"]
+    answer = result["answer"]
+    category = result.get("category", "user_feedback")
+    t = f"{catalog}.default"
+
+    def _do_update():
+        w = get_db_client()
+        # Dedup: check for similar existing entry via VS similarity search
+        if vs_index:
+            try:
+                vs_resp = w.vector_search_indexes.query_index(
+                    index_name=vs_index, query_text=question,
+                    columns=["id", "question"], num_results=1,
+                    score_threshold=0.9,
+                )
+                rows = getattr(vs_resp.result, "data_array", None) or []
+                if rows:
+                    existing_id = rows[0][0]
+                    _run_sql(
+                        f"UPDATE {t}.knowledge_base SET answer = \\'{_esc(answer)}\\', "
+                        f"source = \\'auto_feedback\\' WHERE id = {existing_id}"
+                    )
+                    logger.info(f"KB entry updated (id={existing_id})")
+                    return
+            except Exception as e:
+                logger.warning(f"VS dedup check failed: {e}")
+
+        # Insert new entry with auto-incremented ID
+        search_text = f"{question} {answer}"
+        _run_sql(
+            f"INSERT INTO {t}.knowledge_base "
+            f"SELECT COALESCE(MAX(id), 0) + 1, "
+            f"\\'{_esc(question)}\\', \\'{_esc(answer)}\\', "
+            f"\\'{_esc(category)}\\', \\'auto_feedback\\', "
+            f"\\'{_esc(search_text)}\\' "
+            f"FROM {t}.knowledge_base"
+        )
+        logger.info(f"KB entry inserted: {question[:80]}")
+
+    try:
+        await asyncio.to_thread(_do_update)
+        _kb_updates["count"] += 1
+    except Exception as e:
+        logger.error(f"KB auto-update failed: {e}")
+
+
+# ---- Bot handler ----
 
 class AdvisorBot(ActivityHandler):
     async def on_message_activity(self, turn_context: TurnContext):
+        # Handle Adaptive Card button clicks (feedback / comment submissions)
+        if turn_context.activity.value:
+            await self._handle_card_action(turn_context)
+            return
+
         text = (turn_context.activity.text or "").strip()
         if not text:
             return
+
         await turn_context.send_activity(Activity(type=ActivityTypes.typing))
-        logger.info(f"User: {text[:100]}")
-        response = query_orchestrator(text)
-        logger.info(f"Response: {response[:100]}")
-        await turn_context.send_activity(response)
+
+        message_id = str(uuid4())
+        teams_conv_id = turn_context.activity.conversation.id if turn_context.activity.conversation else ""
+        conversation_id = _resolve_conversation_id(teams_conv_id)
+        user_id = ""
+        user_name = ""
+        if turn_context.activity.from_property:
+            user_id = getattr(turn_context.activity.from_property, "aad_object_id", "") or turn_context.activity.from_property.id or ""
+            user_name = turn_context.activity.from_property.name or ""
+
+        logger.info(f"User ({user_name}): {text[:100]}")
+
+        start = _time.time()
+        response, request_id = query_orchestrator(text)
+        elapsed_ms = int((_time.time() - start) * 1000)
+
+        logger.info(f"Response ({elapsed_ms}ms): {response[:100]}")
+
+        # Cache for potential KB update on negative feedback
+        _messages[message_id] = {"user_message": text, "agent_response": response}
+
+        # Send Adaptive Card with feedback buttons
+        card = build_response_card(response, message_id)
+        attachment = Attachment(
+            content_type="application/vnd.microsoft.card.adaptive",
+            content=card,
+        )
+        await turn_context.send_activity(
+            Activity(type=ActivityTypes.message, attachments=[attachment])
+        )
+
+        # Fire-and-forget: log to Delta tables
+        activity_id = turn_context.activity.id or ""
+        asyncio.create_task(_log_message(
+            message_id, conversation_id, text, response,
+            elapsed_ms, activity_id, request_id,
+        ))
+        asyncio.create_task(_log_conversation(
+            conversation_id, teams_conv_id, user_id, user_name,
+        ))
+
+    async def _handle_card_action(self, turn_context):
+        """Handle feedback button clicks and comment submissions."""
+        value = turn_context.activity.value or {}
+        action = value.get("action", "")
+        user_id = ""
+        if turn_context.activity.from_property:
+            user_id = getattr(turn_context.activity.from_property, "aad_object_id", "") or turn_context.activity.from_property.id or ""
+
+        if action == "feedback":
+            message_id = value.get("message_id", "")
+            rating = value.get("rating", "")
+            teams_conv_id = turn_context.activity.conversation.id if turn_context.activity.conversation else ""
+            conversation_id = _resolve_conversation_id(teams_conv_id)
+
+            asyncio.create_task(_log_feedback(
+                str(uuid4()), message_id, conversation_id, rating, user_id,
+            ))
+
+            if rating == "negative":
+                # Ask for correction details
+                card = build_comment_card(message_id, conversation_id)
+                attachment = Attachment(
+                    content_type="application/vnd.microsoft.card.adaptive",
+                    content=card,
+                )
+                await turn_context.send_activity(
+                    Activity(type=ActivityTypes.message, attachments=[attachment])
+                )
+            else:
+                await turn_context.send_activity("Thanks for your feedback!")
+
+        elif action == "comment":
+            message_id = value.get("message_id", "")
+            conversation_id = value.get("conversation_id", "")
+            comment = value.get("comment_text", "").strip()
+
+            if comment:
+                # Log feedback with comment
+                asyncio.create_task(_log_feedback(
+                    str(uuid4()), message_id, conversation_id,
+                    "negative_with_comment", user_id, comment,
+                ))
+                # Auto-update knowledge base from correction
+                msg_data = _messages.get(message_id, {})
+                if msg_data:
+                    asyncio.create_task(_auto_update_knowledge_base(
+                        msg_data["user_message"], msg_data["agent_response"], comment,
+                    ))
+
+            await turn_context.send_activity(
+                "Thanks for your feedback! Your correction helps improve future responses."
+            )
 
     async def on_members_added_activity(self, members_added, turn_context: TurnContext):
         for member in members_added:
             if member.id != turn_context.activity.recipient.id:
                 await turn_context.send_activity(
-                    "Hello! I\\'m the **UC Data Advisor**. Ask me about datasets, "
+                    "Hello! I am the **UC Data Advisor**. Ask me about datasets, "
                     "metrics, or data governance in Unity Catalog."
                 )
 

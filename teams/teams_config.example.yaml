@@ -36,3 +36,7 @@ databricks:
   # SP credentials for calling the orchestrator endpoint
   sp_client_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
   sp_client_secret: "dosexxxxxxxxxxxxxxxxxx"
+  # Feedback tracking (optional — if set, bot logs conversations + feedback to Delta tables)
+  advisor_catalog: "my_advisor_catalog"       # UC catalog with feedback tables
+  warehouse_id: "xxxxxxxxxxxx"                # SQL warehouse for writing feedback
+  vs_index_knowledge: ""                      # VS index for auto-KB dedup (e.g., catalog.schema.knowledge_vs_index)
