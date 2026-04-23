@@ -19,13 +19,19 @@ import yaml
 _AZ_EXE = "az.cmd" if sys.platform == "win32" else "az"
 _AZ_SUBSCRIPTION: str = ""  # Set at start of deploy()/teardown() so every az call targets the configured subscription.
 
+# Command groups that operate at tenant scope (not subscription) and reject --subscription.
+_AZ_NO_SUBSCRIPTION_PREFIXES: tuple[str, ...] = ("ad", "account")
+
 
 def _az(args: list[str], description: str = "", check: bool = True) -> subprocess.CompletedProcess:
-    """Run an Azure CLI command. If _AZ_SUBSCRIPTION is set and the command
-    doesn't already specify --subscription, append it so every call targets
-    the subscription declared in the config rather than the active CLI context."""
+    """Run an Azure CLI command. If _AZ_SUBSCRIPTION is set, append --subscription
+    so every call targets the subscription declared in the config rather than the
+    active CLI context. Skipped for tenant-scoped groups (`ad`, `account`) which
+    reject that flag."""
     cmd = [_AZ_EXE] + args
-    if _AZ_SUBSCRIPTION and "--subscription" not in args:
+    first = args[0] if args else ""
+    supports_sub = first not in _AZ_NO_SUBSCRIPTION_PREFIXES
+    if _AZ_SUBSCRIPTION and supports_sub and "--subscription" not in args:
         cmd += ["--subscription", _AZ_SUBSCRIPTION]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if check and result.returncode != 0:
