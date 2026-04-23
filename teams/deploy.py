@@ -17,11 +17,16 @@ import yaml
 
 
 _AZ_EXE = "az.cmd" if sys.platform == "win32" else "az"
+_AZ_SUBSCRIPTION: str = ""  # Set at start of deploy()/teardown() so every az call targets the configured subscription.
 
 
 def _az(args: list[str], description: str = "", check: bool = True) -> subprocess.CompletedProcess:
-    """Run an Azure CLI command."""
+    """Run an Azure CLI command. If _AZ_SUBSCRIPTION is set and the command
+    doesn't already specify --subscription, append it so every call targets
+    the subscription declared in the config rather than the active CLI context."""
     cmd = [_AZ_EXE] + args
+    if _AZ_SUBSCRIPTION and "--subscription" not in args:
+        cmd += ["--subscription", _AZ_SUBSCRIPTION]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if check and result.returncode != 0:
         prefix = f"FAILED: {description} — " if description else "FAILED: "
@@ -77,14 +82,109 @@ def _explain_policy_error(stderr: str) -> None:
                 print(f"        param `{pname}`: {desc}")
 
 
+def _configure_network(config: dict, s, web_app_name: str, bot_rg: str, sub_id: str) -> None:
+    """Apply VNet integration, private DNS, and ingress restrictions to the Web App.
+
+    Assumes the Databricks workspace is already behind Private Link with a PE + private DNS zone.
+    This function wires the Web App's outbound egress through a VNet that can reach the PE, and
+    optionally links the existing private DNS zone to that VNet for FQDN resolution.
+    """
+    net = config.get("network", {}) or {}
+    vnet_cfg = net.get("vnet", {}) or {}
+    subnet_cfg = net.get("subnet", {}) or {}
+    dns_cfg = net.get("private_dns_zone", {}) or {}
+
+    vnet_name = vnet_cfg.get("name", "")
+    vnet_rg = vnet_cfg.get("resource_group") or bot_rg
+    subnet_name = subnet_cfg.get("name", "bot-integration-subnet")
+    subnet_prefix = subnet_cfg.get("address_prefix", "")
+
+    print(f"{s(4)} Network...", flush=True)
+
+    if not vnet_name:
+        print("  SKIPPED: network.vnet.name is required when network.enabled=true")
+        return
+
+    # Ensure the integration subnet exists and is delegated to Microsoft.Web/serverFarms.
+    r = _az(["network", "vnet", "subnet", "show",
+             "--resource-group", vnet_rg, "--vnet-name", vnet_name,
+             "--name", subnet_name, "-o", "json"], check=False)
+    if r.returncode != 0:
+        if not subnet_prefix:
+            print(f"  FAILED: subnet '{subnet_name}' not found in {vnet_rg}/{vnet_name} and "
+                  f"no network.subnet.address_prefix provided to create it.")
+            return
+        print(f"  Creating subnet {subnet_name} ({subnet_prefix})...", flush=True)
+        _az(["network", "vnet", "subnet", "create",
+             "--resource-group", vnet_rg, "--vnet-name", vnet_name,
+             "--name", subnet_name, "--address-prefix", subnet_prefix,
+             "--delegations", "Microsoft.Web/serverFarms"], "create integration subnet")
+    else:
+        try:
+            sdata = json.loads(r.stdout)
+            delegations = sdata.get("delegations") or []
+            has_delegation = any(
+                (d.get("serviceName") or (d.get("properties") or {}).get("serviceName"))
+                == "Microsoft.Web/serverFarms" for d in delegations
+            )
+        except Exception:
+            has_delegation = False
+        if not has_delegation:
+            print(f"  Delegating {subnet_name} to Microsoft.Web/serverFarms...", flush=True)
+            _az(["network", "vnet", "subnet", "update",
+                 "--resource-group", vnet_rg, "--vnet-name", vnet_name,
+                 "--name", subnet_name, "--delegations", "Microsoft.Web/serverFarms"],
+                "delegate subnet")
+
+    # VNet-integrate the Web App.
+    subnet_id = (f"/subscriptions/{sub_id}/resourceGroups/{vnet_rg}"
+                 f"/providers/Microsoft.Network/virtualNetworks/{vnet_name}/subnets/{subnet_name}")
+    print(f"  Integrating Web App into {vnet_rg}/{vnet_name}/{subnet_name}...", flush=True)
+    _az(["webapp", "vnet-integration", "add",
+         "--resource-group", bot_rg, "--name", web_app_name,
+         "--vnet", vnet_name, "--subnet", subnet_id], "add vnet integration", check=False)
+
+    # Link the existing private DNS zone to the VNet so the workspace FQDN resolves privately.
+    pdns_name = dns_cfg.get("name", "privatelink.azuredatabricks.net")
+    pdns_rg = dns_cfg.get("resource_group", "")
+    if pdns_rg and dns_cfg.get("link_to_vnet", True):
+        link_name = f"{web_app_name}-link"
+        r = _az(["network", "private-dns", "link", "vnet", "show",
+                 "--resource-group", pdns_rg, "--zone-name", pdns_name,
+                 "--name", link_name], check=False)
+        if r.returncode != 0:
+            vnet_id = (f"/subscriptions/{sub_id}/resourceGroups/{vnet_rg}"
+                       f"/providers/Microsoft.Network/virtualNetworks/{vnet_name}")
+            print(f"  Linking private DNS zone {pdns_name} to {vnet_name}...", flush=True)
+            _az(["network", "private-dns", "link", "vnet", "create",
+                 "--resource-group", pdns_rg, "--zone-name", pdns_name,
+                 "--name", link_name, "--virtual-network", vnet_id,
+                 "--registration-enabled", "false"], "link private DNS zone")
+        else:
+            print(f"  DNS zone {pdns_name} already linked.", flush=True)
+
+    # Restrict inbound to Bot Service service tag.
+    if net.get("restrict_ingress_to_bot_service", True):
+        print(f"  Restricting inbound to AzureBotService service tag...", flush=True)
+        _az(["webapp", "config", "access-restriction", "add",
+             "--resource-group", bot_rg, "--name", web_app_name,
+             "--rule-name", "AllowBotService", "--action", "Allow", "--priority", "100",
+             "--service-tag", "AzureBotService"], "add access restriction", check=False)
+
+
 def deploy(config: dict) -> None:
     """Deploy the Teams bot end-to-end."""
+    global _AZ_SUBSCRIPTION
+
     azure = config.get("azure", {})
     bot = config.get("bot", {})
     ad = config.get("azure_ad", {})
     db = config.get("databricks", {})
+    net = config.get("network", {}) or {}
+    network_enabled = bool(net.get("enabled"))
 
     sub_id = azure["subscription_id"]
+    _AZ_SUBSCRIPTION = sub_id
     rg = azure["resource_group"]
     location = azure.get("location", "canadacentral")
     tags = azure.get("tags", {}) or {}
@@ -98,16 +198,24 @@ def deploy(config: dict) -> None:
     # Tag pairs passed to --tags on RG, Plan, and Web App creation.
     tag_pairs = [f"{k}={v}" for k, v in tags.items()]
 
+    total = 9 if network_enabled else 8
+    s = lambda i: f"[{i}/{total}]"
+
     print("=" * 60)
     print("UC Data Advisor — Teams Bot Deployment")
     print("=" * 60)
+    print(f"  Subscription:   {sub_id}")
     print(f"  Resource group: {rg} ({location})")
     print(f"  Bot name:       {bot_name}")
     print(f"  Web app:        {web_app_name}.azurewebsites.net")
+    if network_enabled:
+        print(f"  Network:        private (VNet integration + private DNS)")
+        if sku.upper() in ("B1", "B2", "B3", "F1"):
+            print(f"  WARNING: sku={sku} does not support VNet integration. Use S1 or higher.")
     print()
 
     # Step 1: Resource group
-    print("[1/8] Resource group...", end=" ", flush=True)
+    print(f"{s(1)} Resource group...", end=" ", flush=True)
     r = _az(["group", "show", "--name", rg], check=False)
     if r.returncode != 0:
         args = ["group", "create", "--name", rg, "--location", location]
@@ -124,7 +232,7 @@ def deploy(config: dict) -> None:
         print("exists")
 
     # Step 2: App Service Plan
-    print("[2/8] App Service Plan...", end=" ", flush=True)
+    print(f"{s(2)} App Service Plan...", end=" ", flush=True)
     r = _az(["appservice", "plan", "show", "--name", plan_name, "--resource-group", rg], check=False)
     if r.returncode != 0:
         args = ["appservice", "plan", "create", "--name", plan_name, "--resource-group", rg,
@@ -139,7 +247,7 @@ def deploy(config: dict) -> None:
         print("exists")
 
     # Step 3: Web App
-    print("[3/8] Web App...", end=" ", flush=True)
+    print(f"{s(3)} Web App...", end=" ", flush=True)
     r = _az(["webapp", "show", "--name", web_app_name, "--resource-group", rg], check=False)
     if r.returncode != 0:
         args = ["webapp", "create", "--name", web_app_name, "--resource-group", rg,
@@ -153,8 +261,13 @@ def deploy(config: dict) -> None:
     else:
         print("exists")
 
-    # Step 4: App Registration
-    print("[4/8] App Registration...", end=" ", flush=True)
+    # Step 4 (conditional): Network — VNet integration, private DNS, ingress restriction.
+    if network_enabled:
+        _configure_network(config, s, web_app_name, rg, sub_id)
+
+    # Next step: App Registration
+    step_idx = 5 if network_enabled else 4
+    print(f"{s(step_idx)} App Registration...", end=" ", flush=True)
     app_id = ad.get("app_id", "")
     tenant_id = ad.get("tenant_id", "")
     client_secret = ad.get("client_secret", "")
@@ -191,8 +304,9 @@ def deploy(config: dict) -> None:
     config["azure_ad"]["tenant_id"] = tenant_id
     config["azure_ad"]["client_secret"] = client_secret
 
-    # Step 5: Azure Bot
-    print("[5/8] Azure Bot...", end=" ", flush=True)
+    # Azure Bot
+    step_idx += 1
+    print(f"{s(step_idx)} Azure Bot...", end=" ", flush=True)
     r = _az(["resource", "show", "--resource-group", rg,
              "--resource-type", "Microsoft.BotService/botServices", "--name", bot_name], check=False)
     if r.returncode != 0:
@@ -216,8 +330,9 @@ def deploy(config: dict) -> None:
     else:
         print("exists")
 
-    # Step 6: Teams Channel
-    print("[6/8] Teams Channel...", end=" ", flush=True)
+    # Teams Channel
+    step_idx += 1
+    print(f"{s(step_idx)} Teams Channel...", end=" ", flush=True)
     channel_body = json.dumps({
         "location": "global",
         "properties": {
@@ -230,27 +345,36 @@ def deploy(config: dict) -> None:
          "--body", channel_body], check=False)
     print("enabled")
 
-    # Step 7: Web App Environment Variables
-    print("[7/8] Environment variables...", end=" ", flush=True)
+    # Web App Environment Variables
+    step_idx += 1
+    print(f"{s(step_idx)} Environment variables...", end=" ", flush=True)
+    env_settings = [
+        f"DATABRICKS_HOST={db['host']}",
+        f"DATABRICKS_SP_CLIENT_ID={db.get('sp_client_id', '')}",
+        f"DATABRICKS_SP_CLIENT_SECRET={db.get('sp_client_secret', '')}",
+        f"SERVING_ENDPOINT_NAME={db['orchestrator_endpoint']}",
+        f"MicrosoftAppId={app_id}",
+        f"MicrosoftAppPassword={client_secret}",
+        "MicrosoftAppType=singletenant",
+        f"MicrosoftTenantId={tenant_id}",
+        "SCM_DO_BUILD_DURING_DEPLOYMENT=True",
+    ]
+    if network_enabled and net.get("route_all_traffic", True):
+        # Force all Web App egress through the integrated VNet so private DNS applies.
+        env_settings += [
+            "WEBSITE_VNET_ROUTE_ALL=1",
+            f"WEBSITE_DNS_SERVER={net.get('dns_server', '168.63.129.16')}",
+        ]
     _az(["webapp", "config", "appsettings", "set",
          "--name", web_app_name, "--resource-group", rg,
-         "--settings",
-         f"DATABRICKS_HOST={db['host']}",
-         f"DATABRICKS_SP_CLIENT_ID={db.get('sp_client_id', '')}",
-         f"DATABRICKS_SP_CLIENT_SECRET={db.get('sp_client_secret', '')}",
-         f"SERVING_ENDPOINT_NAME={db['orchestrator_endpoint']}",
-         f"MicrosoftAppId={app_id}",
-         f"MicrosoftAppPassword={client_secret}",
-         "MicrosoftAppType=singletenant",
-         f"MicrosoftTenantId={tenant_id}",
-         "SCM_DO_BUILD_DURING_DEPLOYMENT=True",
-         ], check=False)
+         "--settings", *env_settings], check=False)
     _az(["webapp", "config", "set", "--name", web_app_name, "--resource-group", rg,
          "--startup-file", "python3 app.py"], check=False)
     print("set")
 
-    # Step 8: Deploy bot code
-    print("[8/8] Deploying bot code...", end=" ", flush=True)
+    # Deploy bot code
+    step_idx += 1
+    print(f"{s(step_idx)} Deploying bot code...", end=" ", flush=True)
 
     # Clone the Databricks bot repo if not already present
     bot_code_dir = os.path.join(os.path.dirname(__file__), ".bot-code")
@@ -302,37 +426,60 @@ def deploy(config: dict) -> None:
 
 def teardown(config: dict) -> None:
     """Delete all Teams bot Azure resources."""
+    global _AZ_SUBSCRIPTION
+
     azure = config.get("azure", {})
     bot = config.get("bot", {})
     ad = config.get("azure_ad", {})
+    net = config.get("network", {}) or {}
+    network_enabled = bool(net.get("enabled"))
 
+    _AZ_SUBSCRIPTION = azure["subscription_id"]
     rg = azure["resource_group"]
     bot_name = bot["name"]
     web_app_name = bot.get("web_app_name", bot_name)
     plan_name = bot.get("app_service_plan", f"{bot_name}-plan")
     app_id = ad.get("app_id", "")
 
+    total = 5 if network_enabled else 4
+    s = lambda i: f"[{i}/{total}]"
+
     print("=" * 60)
     print("Teams Bot Teardown")
     print("=" * 60)
 
-    print("[1/4] Azure Bot...", end=" ", flush=True)
+    # Private DNS zone link is removed first (if we created one).
+    if network_enabled:
+        dns_cfg = net.get("private_dns_zone", {}) or {}
+        pdns_rg = dns_cfg.get("resource_group", "")
+        pdns_name = dns_cfg.get("name", "privatelink.azuredatabricks.net")
+        if pdns_rg and dns_cfg.get("link_to_vnet", True):
+            print(f"{s(1)} Private DNS zone link...", end=" ", flush=True)
+            _az(["network", "private-dns", "link", "vnet", "delete",
+                 "--resource-group", pdns_rg, "--zone-name", pdns_name,
+                 "--name", f"{web_app_name}-link", "--yes"], check=False)
+            print("deleted")
+        else:
+            print(f"{s(1)} Private DNS zone link... skipped (no zone RG configured)")
+
+    offset = 1 if network_enabled else 0
+    print(f"{s(1 + offset)} Azure Bot...", end=" ", flush=True)
     _az(["resource", "delete", "--resource-group", rg,
          "--resource-type", "Microsoft.BotService/botServices",
          "--name", bot_name], check=False)
     print("deleted")
 
-    print("[2/4] Web App...", end=" ", flush=True)
+    print(f"{s(2 + offset)} Web App...", end=" ", flush=True)
     _az(["webapp", "delete", "--name", web_app_name, "--resource-group", rg], check=False)
     print("deleted")
 
-    print("[3/4] App Service Plan...", end=" ", flush=True)
+    print(f"{s(3 + offset)} App Service Plan...", end=" ", flush=True)
     _az(["appservice", "plan", "delete", "--name", plan_name,
          "--resource-group", rg, "--yes"], check=False)
     print("deleted")
 
     if app_id:
-        print("[4/4] App Registration...", end=" ", flush=True)
+        print(f"{s(4 + offset)} App Registration...", end=" ", flush=True)
         _az(["ad", "app", "delete", "--id", app_id], check=False)
         print("deleted")
 

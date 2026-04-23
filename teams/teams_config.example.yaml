@@ -44,3 +44,46 @@ databricks:
   # SP credentials for calling the orchestrator endpoint
   sp_client_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
   sp_client_secret: "dosexxxxxxxxxxxxxxxxxx"
+
+# Private networking (OPTIONAL)
+# Enable this when the Databricks workspace is behind Private Link (no public
+# access) and the bot's Web App needs to reach the serving endpoint via the
+# existing workspace private endpoint.
+#
+# Requires:
+#   - bot.sku: S1 or higher (B1 does not support VNet integration)
+#   - An existing VNet you can integrate the Web App into, with connectivity
+#     (direct or peered) to the Databricks workspace private endpoint.
+#   - The existing Azure Private DNS zone `privatelink.azuredatabricks.net`
+#     that your workspace PE is registered against.
+network:
+  enabled: false
+
+  # VNet the Web App integrates into (outbound egress). Must be reachable from
+  # the Databricks workspace PE (same VNet or peered).
+  vnet:
+    name: ""
+    resource_group: ""                  # defaults to azure.resource_group if blank
+
+  # Subnet in the above VNet, dedicated to App Service VNet integration.
+  # Will be created if missing (requires address_prefix). Delegated to
+  # Microsoft.Web/serverFarms automatically.
+  subnet:
+    name: "bot-integration-subnet"
+    address_prefix: ""                  # e.g. "10.0.5.0/27" — only used when creating the subnet
+
+  # Existing Azure Private DNS zone for the Databricks workspace. The deploy
+  # script links this zone to the bot VNet so the workspace FQDN resolves to
+  # the PE's private IP from inside the Web App.
+  private_dns_zone:
+    name: "privatelink.azuredatabricks.net"
+    resource_group: ""                  # RG where the private DNS zone lives
+    link_to_vnet: true                  # link the zone to network.vnet (idempotent)
+
+  # Force all Web App outbound through the VNet (needed because the workspace
+  # FQDN is a public-looking name that must resolve privately).
+  route_all_traffic: true
+  dns_server: "168.63.129.16"           # Azure-provided resolver; override for custom DNS
+
+  # Lock down Web App ingress to the Azure Bot Service service tag only.
+  restrict_ingress_to_bot_service: true

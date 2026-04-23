@@ -102,6 +102,22 @@ databricks:
   sp_client_secret: ""       # SP OAuth secret for Databricks auth
 ```
 
+## Private Networking (optional)
+
+If the Databricks workspace is behind Private Link with no public access, set
+`network.enabled: true` in the config. The deploy script will:
+
+- Create/delegate a subnet in your chosen VNet (`Microsoft.Web/serverFarms`)
+- Enable Regional VNet Integration on the Web App
+- Set `WEBSITE_VNET_ROUTE_ALL=1` + `WEBSITE_DNS_SERVER=168.63.129.16` so the
+  workspace FQDN resolves via the Azure Private DNS zone
+- Link `privatelink.azuredatabricks.net` to the bot's VNet
+- Restrict Web App inbound to the `AzureBotService` service tag
+
+Requirements: `bot.sku: S1` or higher, an existing VNet reachable from the
+Databricks PE, and the existing private DNS zone for the workspace. See
+`teams_config.example.yaml` → `network:` for the full schema.
+
 ## Teardown
 
 ```bash
