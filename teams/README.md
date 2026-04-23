@@ -39,7 +39,11 @@ azure:
   subscription_id: "your-subscription-id"
   resource_group: "your-rg"
   location: "canadacentral"
-  owner_tag: "you@company.com"
+  tags:
+    owner: "you@company.com"
+    # Add any tags your subscription's Azure Policy requires, e.g.:
+    # Project: "my-project"
+    # CostCenter: "12345"
 
 bot:
   name: "my-advisor-bot"        # Must be globally unique
@@ -76,7 +80,8 @@ azure:
   subscription_id: ""        # Azure subscription ID
   resource_group: ""         # Resource group name
   location: "canadacentral"  # Azure region
-  owner_tag: ""              # Owner tag (required by some Azure policies)
+  tags:                      # Tags for RG/plan/web app/bot; add any your Azure Policy requires
+    owner: "you@company.com"
 
 bot:
   name: ""                   # Azure Bot name (globally unique)

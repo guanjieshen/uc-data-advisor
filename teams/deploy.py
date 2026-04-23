@@ -24,12 +24,57 @@ def _az(args: list[str], description: str = "", check: bool = True) -> subproces
     cmd = [_AZ_EXE] + args
     result = subprocess.run(cmd, capture_output=True, text=True)
     if check and result.returncode != 0:
-        err = result.stderr[:500]
-        if description:
-            print(f"  FAILED: {description} — {err}")
-        else:
-            print(f"  FAILED: {err}")
+        prefix = f"FAILED: {description} — " if description else "FAILED: "
+        print(f"\n  {prefix}{result.stderr.strip()}")
+        _explain_policy_error(result.stderr)
     return result
+
+
+def _explain_policy_error(stderr: str) -> None:
+    """If stderr contains a RequestDisallowedByPolicy error, look up the policy
+    definitions that blocked the request and print the required parameters."""
+    if "RequestDisallowedByPolicy" not in stderr and "disallowed by policy" not in stderr.lower():
+        return
+
+    # Policy definition IDs look like:
+    #   /providers/Microsoft.Authorization/policyDefinitions/<guid>
+    #   /providers/Microsoft.Management/managementGroups/<mg>/providers/Microsoft.Authorization/policyDefinitions/<name>
+    # Extract them from the error text.
+    import re
+    def_ids = list(dict.fromkeys(re.findall(
+        r"(/providers/Microsoft\.Authorization/policyDefinitions/[A-Za-z0-9\-_]+|"
+        r"/providers/Microsoft\.Management/managementGroups/[^\"',\s]+/providers/Microsoft\.Authorization/policyDefinitions/[A-Za-z0-9\-_]+)",
+        stderr,
+    )))
+    if not def_ids:
+        print("\n  (Could not parse policy definition IDs from error — see full stderr above.)")
+        return
+
+    print("\n  Policy definitions that blocked this request:")
+    for def_id in def_ids:
+        r = subprocess.run([_AZ_EXE, "policy", "definition", "show", "--name", def_id.rsplit("/", 1)[-1],
+                            "-o", "json"], capture_output=True, text=True)
+        if r.returncode != 0:
+            # Fallback — try resolving via management group path
+            r = subprocess.run([_AZ_EXE, "rest", "--method", "GET",
+                                "--uri", f"https://management.azure.com{def_id}?api-version=2021-06-01"],
+                                capture_output=True, text=True)
+        if r.returncode != 0 or not r.stdout.strip():
+            print(f"    - {def_id} (could not fetch definition)")
+            continue
+        try:
+            pd = json.loads(r.stdout)
+        except Exception:
+            print(f"    - {def_id} (unparseable response)")
+            continue
+        name = pd.get("displayName") or pd.get("name") or def_id
+        params = pd.get("parameters") or (pd.get("properties", {}) or {}).get("parameters") or {}
+        print(f"    - {name}")
+        if params:
+            for pname, pmeta in params.items():
+                meta = pmeta.get("metadata") or {}
+                desc = meta.get("description") or pmeta.get("defaultValue") or ""
+                print(f"        param `{pname}`: {desc}")
 
 
 def deploy(config: dict) -> None:
@@ -42,7 +87,7 @@ def deploy(config: dict) -> None:
     sub_id = azure["subscription_id"]
     rg = azure["resource_group"]
     location = azure.get("location", "canadacentral")
-    owner_tag = azure.get("owner_tag", "")
+    tags = azure.get("tags", {}) or {}
 
     bot_name = bot["name"]
     web_app_name = bot.get("web_app_name", bot_name)
@@ -50,7 +95,8 @@ def deploy(config: dict) -> None:
     sku = bot.get("sku", "B1")
     runtime = bot.get("runtime", "PYTHON:3.13")
 
-    tags = f"owner={owner_tag}" if owner_tag else ""
+    # Tag pairs passed to --tags on RG, Plan, and Web App creation.
+    tag_pairs = [f"{k}={v}" for k, v in tags.items()]
 
     print("=" * 60)
     print("UC Data Advisor — Teams Bot Deployment")
@@ -65,9 +111,14 @@ def deploy(config: dict) -> None:
     r = _az(["group", "show", "--name", rg], check=False)
     if r.returncode != 0:
         args = ["group", "create", "--name", rg, "--location", location]
-        if tags:
-            args += ["--tags", tags]
-        _az(args, "create resource group")
+        if tag_pairs:
+            args += ["--tags", *tag_pairs]
+        cr = _az(args, "create resource group")
+        if cr.returncode != 0:
+            print("\nABORTING: resource group could not be created. If your subscription requires")
+            print("mandatory tags, add them under `azure.tags` in the config. Example:")
+            print("  azure:\n    tags:\n      Project: my-project\n      CostCenter: 12345")
+            sys.exit(1)
         print("created")
     else:
         print("exists")
@@ -78,9 +129,11 @@ def deploy(config: dict) -> None:
     if r.returncode != 0:
         args = ["appservice", "plan", "create", "--name", plan_name, "--resource-group", rg,
                 "--location", location, "--sku", sku, "--is-linux"]
-        if tags:
-            args += ["--tags", tags]
-        _az(args, "create app service plan")
+        if tag_pairs:
+            args += ["--tags", *tag_pairs]
+        cr = _az(args, "create app service plan")
+        if cr.returncode != 0:
+            sys.exit(1)
         print("created")
     else:
         print("exists")
@@ -91,9 +144,11 @@ def deploy(config: dict) -> None:
     if r.returncode != 0:
         args = ["webapp", "create", "--name", web_app_name, "--resource-group", rg,
                 "--plan", plan_name, "--runtime", runtime]
-        if tags:
-            args += ["--tags", tags]
-        _az(args, "create web app")
+        if tag_pairs:
+            args += ["--tags", *tag_pairs]
+        cr = _az(args, "create web app")
+        if cr.returncode != 0:
+            sys.exit(1)
         print("created")
     else:
         print("exists")
@@ -145,7 +200,7 @@ def deploy(config: dict) -> None:
             "location": "global",
             "sku": {"name": "F0"},
             "kind": "azurebot",
-            "tags": {"owner": owner_tag} if owner_tag else {},
+            "tags": tags,
             "properties": {
                 "displayName": f"UC Data Advisor Bot",
                 "endpoint": f"https://{web_app_name}.azurewebsites.net/api/messages",

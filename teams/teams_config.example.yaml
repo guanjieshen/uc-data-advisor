@@ -11,7 +11,15 @@ azure:
   subscription_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
   resource_group: "my-rg"
   location: "canadacentral"           # Azure region for all resources
-  owner_tag: "you@company.com"        # Required by some Azure policies
+  # Tags applied to resource group, app service plan, web app, and bot.
+  # If your subscription enforces mandatory tags via Azure Policy, add the
+  # required keys here (otherwise `az group create` fails with
+  # RequestDisallowedByPolicy).
+  tags:
+    owner: "you@company.com"
+    # Project: "my-project"
+    # CostCenter: "12345"
+    # Environment: "dev"
 
 # Azure Bot and Web App
 bot:
