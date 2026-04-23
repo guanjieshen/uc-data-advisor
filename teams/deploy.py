@@ -16,9 +16,12 @@ import time
 import yaml
 
 
+_AZ_EXE = "az.cmd" if sys.platform == "win32" else "az"
+
+
 def _az(args: list[str], description: str = "", check: bool = True) -> subprocess.CompletedProcess:
     """Run an Azure CLI command."""
-    cmd = ["az"] + args
+    cmd = [_AZ_EXE] + args
     result = subprocess.run(cmd, capture_output=True, text=True)
     if check and result.returncode != 0:
         err = result.stderr[:500]
