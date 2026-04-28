@@ -413,13 +413,25 @@ def deploy(config: dict) -> None:
                 arcname = os.path.relpath(filepath, teams_bot_dir)
                 zf.write(filepath, arcname)
 
-    r = _az(["webapp", "deployment", "source", "config-zip",
-             "--name", web_app_name, "--resource-group", rg,
-             "--src", zip_path], check=False)
+    # Use OneDeploy (`az webapp deploy`) instead of the legacy config-zip command.
+    # OneDeploy supports Azure AD auth, so it works when SCM basic publishing
+    # credentials are disabled (increasingly common under org-level Azure Policy).
+    r = _az(["webapp", "deploy",
+             "--resource-group", rg, "--name", web_app_name,
+             "--src-path", zip_path, "--type", "zip"], check=False)
     if r.returncode == 0 or "Timeout" in r.stderr:
         print("deployed (build may still be in progress)")
     else:
-        print(f"failed: {r.stderr[:200]}")
+        print(f"failed: {r.stderr[:300]}")
+        if "403" in r.stderr or "401" in r.stderr or "Unauthorized" in r.stderr.lower():
+            print("\n  HINT: SCM endpoint returned 401/403. Two likely causes:")
+            print("  1) Basic SCM publishing credentials disabled on the Web App. Enable with:")
+            print(f"     az resource update -g {rg} --namespace Microsoft.Web \\")
+            print(f"       --resource-type basicPublishingCredentialsPolicies \\")
+            print(f"       --name scm --parent sites/{web_app_name} \\")
+            print(f"       --set properties.allow=true")
+            print("  2) SCM site has IP access restrictions blocking your IP. Check:")
+            print(f"     az webapp config access-restriction show -g {rg} -n {web_app_name}")
 
     print()
     print("=" * 60)
@@ -611,23 +623,53 @@ if __name__ == "__main__":
         f.write(app_code)
 
 
+# Keys the user authors. Anything else (e.g., azure_ad app_id/tenant_id/client_secret
+# that the deploy script populates) goes to the .generated sibling file.
+_INPUT_KEYS: tuple[str, ...] = ("azure", "bot", "databricks", "network")
+
+
+def _generated_path(input_path: str) -> str:
+    """foo_config.yaml -> foo_config.generated.yaml."""
+    base, ext = os.path.splitext(input_path)
+    return f"{base}.generated{ext}"
+
+
+def _load_config(input_path: str) -> dict:
+    """Load the user-authored config and merge the .generated sibling on top."""
+    with open(input_path) as f:
+        merged = yaml.safe_load(f) or {}
+    gen_path = _generated_path(input_path)
+    if os.path.exists(gen_path):
+        with open(gen_path) as f:
+            generated = yaml.safe_load(f) or {}
+        merged.update(generated)
+    return merged
+
+
+def _save_generated(config: dict, input_path: str) -> None:
+    """Write only the non-input keys to the .generated sibling. The input file is
+    user-authored and never modified by the deploy script."""
+    generated = {k: v for k, v in config.items() if k not in _INPUT_KEYS}
+    if not generated:
+        return
+    with open(_generated_path(input_path), "w") as f:
+        yaml.dump(generated, f, default_flow_style=False, sort_keys=False)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Deploy UC Data Advisor Teams Bot")
     parser.add_argument("--config", required=True, help="Path to teams_config.yaml")
     parser.add_argument("--step", choices=["deploy", "teardown"], default="deploy")
     args = parser.parse_args()
 
-    with open(args.config) as f:
-        config = yaml.safe_load(f) or {}
+    config = _load_config(args.config)
 
     if args.step == "teardown":
         teardown(config)
     else:
         deploy(config)
 
-    # Save updated config (with app_id, tenant_id, etc.)
-    with open(args.config, "w") as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+    _save_generated(config, args.config)
 
 
 if __name__ == "__main__":

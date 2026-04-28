@@ -228,6 +228,15 @@ config/*.yaml
 !config/advisor_config.example.yaml
 config/.generated/
 
+# Teams bot user config — only the example template is tracked
+teams/*_config.yaml
+teams/*_config.generated.yaml
+!teams/teams_config.example.yaml
+
+# Teams bot deploy artifacts
+teams/.bot-code/
+teams/.bot-deploy.zip
+
 # Claude
 .claude/
 .claude/*

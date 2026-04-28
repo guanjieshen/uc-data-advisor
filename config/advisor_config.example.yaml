@@ -4,6 +4,11 @@
 # Copy this file:  cp config/advisor_config.example.yaml config/my_config.yaml
 # Edit the 3 sections below, then run:
 #   uv run python -m src.setup.run --config config/my_config.yaml
+#
+# This file is the INPUT half of the config — only user-authored fields belong here.
+# Pipeline-generated fields (infrastructure IDs, prompts, knowledge base, agent endpoints)
+# are written to a sibling file `<name>_config.generated.yaml`. That file is safe to
+# delete to force a clean re-run of the pipeline. Do not hand-edit the generated file.
 # ============================================================
 
 # 1. Source catalogs to scan (REQUIRED)

@@ -148,9 +148,11 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
                 print(f"  [{agent_name}] FAILED: {e}")
                 logger.error(f"Failed to deploy {agent_name}: {e}", exc_info=True)
 
-    # Phase 2: Deploy orchestrator with sub-agent endpoint names
+    # Phase 2: Deploy orchestrator with sub-agent endpoint names. Must build from
+    # secret_env_vars so DATABRICKS_CLIENT_ID/SECRET are included — the orchestrator
+    # uses them to authenticate when calling sub-agent serving endpoints.
     if orchestrator_model:
-        orch_env = dict(env_vars)
+        orch_env = dict(secret_env_vars)
         for agent_name, ep_name in endpoints.items():
             orch_env[f"{agent_name.upper()}_AGENT_ENDPOINT"] = ep_name
         try:

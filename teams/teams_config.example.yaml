@@ -4,6 +4,11 @@
 # Copy this file:  cp teams/teams_config.example.yaml teams/teams_config.yaml
 # Fill in the values, then run:
 #   python teams/deploy.py --config teams/teams_config.yaml
+#
+# This file is the INPUT half of the config — only user-authored fields belong here.
+# Pipeline-generated fields (Entra app_id, tenant_id, client_secret) are written to
+# a sibling file `<name>.generated.yaml`. That file is safe to delete to force the
+# script to recreate the App Registration. Do not hand-edit the generated file.
 # ============================================================
 
 # Azure subscription and resource group
@@ -29,13 +34,9 @@ bot:
   sku: "B1"                           # App Service pricing tier (B1 = Basic)
   runtime: "PYTHON:3.13"              # Python runtime version
 
-# Azure AD App Registration (created automatically by deploy script)
-# Leave blank on first run — the script creates and populates these.
-# On subsequent runs, provide existing values to skip recreation.
-azure_ad:
-  app_id: ""                          # Application (client) ID
-  tenant_id: ""                       # Directory (tenant) ID
-  client_secret: ""                   # Client secret value
+# NOTE: The Azure AD App Registration (app_id, tenant_id, client_secret) is
+# auto-populated by the deploy script and stored in the .generated.yaml sibling
+# file — DO NOT add an `azure_ad:` section here.
 
 # Databricks connection
 databricks:
