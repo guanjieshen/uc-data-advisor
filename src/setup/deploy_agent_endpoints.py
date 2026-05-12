@@ -123,7 +123,7 @@ def deploy_agent_endpoints(config: dict, w) -> dict:
         # Wait for endpoint to be READY before patching config
         _wait_for_endpoint_ready(w, ep_name)
         _configure_ai_gateway(w, ep_name, config)
-        _patch_endpoint_env_vars(w, ep_name, ep_env)
+        _patch_endpoint_env_vars(w, ep_name, ep_env, scale_to_zero=scale_to_zero)
 
         return agent_name, ep_name
 
@@ -209,8 +209,12 @@ def grant_agent_permissions(config: dict, w) -> None:
     _grant_endpoint_permissions(w, infra, config, endpoints, sp)
 
 
-def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):
-    """Patch environment variables onto a serving endpoint's served entities."""
+def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict, scale_to_zero: bool = True):
+    """Patch environment variables onto a serving endpoint's served entities.
+
+    Preserves the caller-supplied scale_to_zero setting so this helper doesn't
+    silently flip endpoints back to scale-to-zero after deploy_agents.
+    """
     try:
         ep = w.serving_endpoints.get(ep_name)
         if not ep.config or not ep.config.served_entities:
@@ -226,7 +230,7 @@ def _patch_endpoint_env_vars(w, ep_name: str, env_vars: dict):
                 "entity_version": entity.entity_version,
                 "environment_vars": existing_vars,
                 "workload_size": "Small",
-                "scale_to_zero_enabled": True,
+                "scale_to_zero_enabled": scale_to_zero,
             })
         if entities:
             w.api_client.do("PUT", f"/api/2.0/serving-endpoints/{ep_name}/config", body={
