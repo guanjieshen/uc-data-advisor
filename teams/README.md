@@ -4,15 +4,18 @@ Microsoft Teams bot that forwards user messages to the UC Data Advisor orchestra
 
 ## Architecture
 
-```
-Teams User → Microsoft Bot Connector → Azure Web App (/api/messages, Python aiohttp bot)
-                                              │
-                                              ▼  (SP OAuth)
-                                       Databricks Workspace
-                                       Orchestrator Serving Endpoint
-                                              │
-                                              ▼
-                              Discovery / Metrics / Q&A agents → Unity Catalog
+```mermaid
+flowchart LR
+  U[Teams User] --> BC[Bot Connector] --> WA[Web App<br/>/api/messages]
+  WA -->|SP OAuth| O[Orchestrator]
+  O --> A[Discovery / Metrics / Q&A] --> UC[(Unity Catalog)]
+
+  classDef ms fill:#fef3c7,stroke:#d97706,color:#000
+  classDef az fill:#dbeafe,stroke:#2563eb,color:#000
+  classDef db fill:#fee2e2,stroke:#dc2626,color:#000
+  class U,BC ms
+  class WA az
+  class O,A,UC db
 ```
 
 The bot authenticates to Databricks using a single workspace service principal — all Teams users share that SP's permissions. There is no per-user OAuth.
@@ -122,17 +125,26 @@ For workspaces behind **Private Link**, with **NCC** for serverless egress, opti
 
 ### What the bot's runtime path looks like
 
-```
-Web App  ──VNet integration──►  bot-integration subnet
-                                       │
-                                       ▼  (intra-VNet routing)
-                                private-endpoints subnet
-                                       │
-                                       ▼
-                              ws-uiapi-pe ──► Customer's Workspace REST API
-                                                    │
-                                                    ▼
-                                          orchestrator + sub-agents
+```mermaid
+flowchart TB
+  WA[Web App]
+
+  subgraph BOTVNET["bot-vnet · customer-owned · no overlap"]
+    direction LR
+    INT[bot-integration<br/>subnet /27]
+    PEP[ws-uiapi-pe<br/>private-endpoints /26]
+    INT --> PEP
+  end
+
+  WS[Workspace REST API] --> AG[Orchestrator<br/>+ sub-agents]
+
+  WA -->|VNet Integration| INT
+  PEP -->|Private Link| WS
+
+  classDef cust fill:#dbeafe,stroke:#2563eb,color:#000
+  classDef wsc fill:#fee2e2,stroke:#dc2626,color:#000
+  class WA,INT,PEP cust
+  class WS,AG wsc
 ```
 
 DNS resolution: bot-vnet has a **private DNS zone** named `privatelink.azuredatabricks.net` linked only to bot-vnet. The workspace FQDN resolves to the bot-side PE's private IP from inside the Web App. No traffic leaves the customer's VNets.

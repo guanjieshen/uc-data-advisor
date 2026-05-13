@@ -2,6 +2,8 @@
 
 Deploy a multi-agent Unity Catalog data advisor on any Databricks workspace (AWS or Azure). The setup pipeline auto-creates all infrastructure, registers agents as MLflow models on Model Serving, and generates all content from your catalog metadata.
 
+For Microsoft Teams integration, see [`teams/README.md`](teams/README.md) — two supported patterns covering public-workspace and fully-private (Private Link + NCC) deployments.
+
 ## Prerequisites
 
 - **Databricks workspace** with Unity Catalog enabled
@@ -21,6 +23,11 @@ cd uc-data-advisor
 # 2. Create your config
 cp config/advisor_config.example.yaml config/my_config.yaml
 ```
+
+The config lives in two files side by side:
+
+- **`config/my_config.yaml`** — user-authored. You fill it in once. Never written by the pipeline.
+- **`config/my_config.generated.yaml`** — pipeline-managed. Auto-populated on first run with infrastructure IDs, prompts, benchmarks, agent endpoint references. Safe to delete to force a clean re-run. Do not hand-edit.
 
 Edit `config/my_config.yaml` — you need to set 3 things:
 
@@ -101,11 +108,11 @@ Registers each agent (discovery, metrics, qa, orchestrator) as an MLflow model i
 
 ### Step 6: Deploy Agent Endpoints
 
-Deploys each registered model to its own Model Serving endpoint via the Databricks Agent Bricks SDK (`agents.deploy()`). Endpoints:
-- Scale to zero when idle
-- Receive SP credentials read from secret scope at deploy time
+Deploys each registered model to its own Model Serving endpoint via the Databricks SDK (`serving_endpoints.create`/`update_config`). Endpoints:
+- Scale-to-zero is on by default; flip `scale_to_zero: false` in your config to keep them warm
+- Receive SP credentials as `{{secrets/<scope>/sp-client-id}}` and `{{secrets/<scope>/sp-client-secret}}` env-var references (resolved by Model Serving at runtime against the workspace secret scope)
 - Receive environment variables for Genie Space, VS indexes, LLM endpoint, and `SOURCE_CATALOGS`
-- Orchestrator deployed last with sub-agent endpoint names
+- Sub-agents (discovery, metrics, qa) deployed in parallel; orchestrator deployed last with sub-agent endpoint names
 
 ### Step 7: Grant Agent Endpoint Permissions
 
@@ -164,13 +171,15 @@ service_principal: "xxx"  # SP application (client) ID — you must own this SP
 Optional overrides (all have smart defaults if omitted):
 
 ```yaml
-app_name: my-project-advisor           # Default: derived from catalog prefix, MUST be unique per workspace
+app_name: my-project-advisor           # Default: derived from catalog prefix, MUST be unique per metastore
 warehouse_id: "abc123def456"           # SQL warehouse ID (auto-discovered if omitted)
 advisor_catalog: my_project_catalog    # Default: {app_name}_catalog
 external_location: "my-ext-loc-name"   # UC external location for catalog storage (auto-detected)
 serving_model: databricks-claude-opus-4-6  # Foundation model for LLM calls
 embedding_model: databricks-bge-large-en   # VS embedding model
+scale_to_zero: true                    # Agent endpoints scale-to-zero when idle (default true)
 enable_metric_views: false             # Generate metric views and materialized tables
+enable_volume_indexing: false          # Index UC Volume contents in the metadata VS index
 enable_ai_gateway_guardrails: false    # Enable input safety guardrails on agent endpoints
 rate_limits:                           # AI Gateway rate limits on agent endpoints (optional)
   - calls: 120
@@ -182,20 +191,42 @@ exclude_schemas: [staging, temp]       # Skip these schemas
 
 ## Architecture
 
+```mermaid
+flowchart TB
+  C[Client<br/>Teams · Notebook · HTTP] --> O[Orchestrator<br/>classifies + routes]
+
+  subgraph AGENTS["Sub-agents"]
+    direction LR
+    D[Discovery]
+    M[Metrics]
+    Q[Q&A]
+  end
+
+  O --> AGENTS
+
+  subgraph STORES["Tools + retrieval"]
+    direction LR
+    VS[VS Metadata]
+    G[Genie Space]
+    KB[VS Knowledge Base]
+  end
+
+  D --> VS
+  M --> G
+  Q --> KB
+
+  IS[(system.information_schema)] -.->|setup time| VS
+  IS -.->|setup time| KB
+  G -.->|NL → SQL| UC[(Unity Catalog)]
+  IS --- UC
+
+  classDef ep fill:#fee2e2,stroke:#dc2626,color:#000
+  classDef store fill:#dbeafe,stroke:#2563eb,color:#000
+  class O,D,M,Q ep
+  class VS,G,KB,IS,UC store
 ```
-Client (Teams, Notebook, HTTP)
-         ↓
-    Orchestrator Endpoint (classifies intent, routes)
-         ↓
-    ┌────┼────┐
-    ↓    ↓    ↓
- Discovery  Metrics  Q&A          ← Each is a Model Serving endpoint
-    ↓         ↓       ↓
- VS Index   Genie   Knowledge
- (metadata) Space   Base VS
-    ↑         ↓
-    system.information_schema → Unity Catalog (populated at setup time)
-```
+
+Each of `Orchestrator`, `Discovery`, `Metrics`, `Q&A` is its own Model Serving endpoint.
 
 - **Orchestrator endpoint**: Single entry point — classifies intent via LLM, routes to sub-agent endpoints, handles general responses directly
 - **Discovery via VS index**: Queries a pre-built metadata index containing tables, volumes, columns, tags, constraints, lineage, privileges — no runtime SQL
@@ -220,7 +251,7 @@ This deletes (in order):
 5. Vector Search endpoint
 6. Advisor catalog (CASCADE)
 
-The teardown clears the config's `infrastructure` and `generated` sections automatically.
+The pipeline clears the `infrastructure` and `generated` sections in `<name>_config.generated.yaml` on teardown so subsequent runs start clean. Your user-authored `<name>_config.yaml` is never modified. You can also delete the `.generated.yaml` file outright to force a fully fresh state.
 
 ## Benchmarks
 

@@ -5,45 +5,41 @@ A multi-agent system that enables natural language dataset discovery over Unity 
 ## Architecture
 
 ```mermaid
-flowchart TB
-    subgraph SERVING["MODEL SERVING ENDPOINTS"]
-        ORCH[Orchestrator Agent]
-        DA[Discovery Agent]
-        DM[Metrics Agent]
-        QA[Q&A Agent]
-    end
+flowchart LR
+  ORCH[Orchestrator]
 
-    subgraph LLM["LLM"]
-        CLAUDE[Foundation Model]
-    end
+  subgraph AGENTS["Sub-agents"]
+    direction TB
+    DA[Discovery]
+    DM[Metrics]
+    QA[Q&A]
+  end
 
-    subgraph TOOLS["TOOLS & RETRIEVAL"]
-        UC_API[UC API Tools]
-        VS1[Vector Index - Metadata]
-        GENIE[Genie Space]
-        VS2[Vector Index - Knowledge]
-    end
+  subgraph TOOLS["Tools + retrieval"]
+    direction TB
+    VS1[VS Metadata]
+    GENIE[Genie Space]
+    VS2[VS Knowledge]
+  end
 
-    subgraph DATA["DATA LAYER"]
-        UCat[(Unity Catalog)]
-    end
+  UCat[(Unity Catalog)]
+  CLAUDE[(Foundation Model)]
 
-    ORCH -->|discovery| DA
-    ORCH -->|metrics| DM
-    ORCH -->|Q&A| QA
-    ORCH -->|classify| CLAUDE
+  ORCH --> AGENTS
+  DA --> VS1
+  DM --> GENIE
+  QA --> VS2
+  TOOLS --> UCat
 
-    DA -->|LLM| CLAUDE
-    DM -->|LLM| CLAUDE
-    QA -->|LLM| CLAUDE
+  ORCH -.->|LLM| CLAUDE
+  AGENTS -.->|LLM| CLAUDE
 
-    DA -.-> UC_API
-    DA -.-> VS1
-    DM -.-> GENIE
-    QA -.-> VS2
-
-    GENIE --> UCat
-    UC_API --> UCat
+  classDef ep fill:#fee2e2,stroke:#dc2626,color:#000
+  classDef tool fill:#dbeafe,stroke:#2563eb,color:#000
+  classDef store fill:#fff8e1,stroke:#f57f17,color:#000
+  class ORCH,DA,DM,QA ep
+  class VS1,GENIE,VS2 tool
+  class UCat,CLAUDE store
 ```
 
 ## Components
@@ -76,7 +72,11 @@ cp config/advisor_config.example.yaml config/my_config.yaml
 uv run python -m src.setup.run --config config/my_config.yaml
 ```
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for full deployment guide, config reference, benchmarks, and troubleshooting.
+The pipeline keeps user-authored config and pipeline-generated state in separate files (`<name>_config.yaml` + `<name>_config.generated.yaml`). You only ever edit the input file.
+
+- See [DEPLOYMENT.md](DEPLOYMENT.md) for the full deployment guide, config reference, benchmarks, and troubleshooting.
+- See [teams/README.md](teams/README.md) for Microsoft Teams integration (two patterns: public workspace + fully-private with Private Link / NCC).
+- See [teams/ARCHITECTURE.md](teams/ARCHITECTURE.md) for detailed bot architecture diagrams.
 
 ## Project Structure
 
@@ -96,16 +96,22 @@ app/
 src/
   setup/
     run.py                      # Pipeline orchestrator (8 steps + teardown)
+    config_loader.py            # Two-file config (input + .generated sibling)
     provision_infrastructure.py # Creates catalog, VS endpoint, Genie, SP secrets
     audit_metadata.py           # Walks UC catalogs for metadata
     generate_*.py               # Content generation (prompts, KB, benchmarks)
     register_models.py          # MLflow model registration (parallel)
-    deploy_agent_endpoints.py   # Agent Bricks deployment (parallel)
+    deploy_agent_endpoints.py   # Model Serving endpoint creation (sub-agents parallel, orchestrator sequential)
     deploy.py                   # Delta tables, VS indexes, Genie config
     teardown.py                 # Full resource cleanup
 config/
-  advisor_config.example.yaml   # Template config
-teams/                          # Microsoft Teams bot integration
+  advisor_config.example.yaml   # Template config (input half)
+teams/
+  README.md                     # Teams bot: 2 deployment patterns
+  ARCHITECTURE.md               # Detailed bot architecture (Mermaid)
+  ARCHITECTURE.html             # Same content as a brand-styled HTML deck
+  deploy.py                     # Bot Azure deploy (Web App, Bot Service, optional VNet)
+  teams_config.example.yaml     # Bot config template
 tests/
   benchmark.py                  # CLI benchmark script
   benchmark_notebook.py         # Databricks notebook benchmark

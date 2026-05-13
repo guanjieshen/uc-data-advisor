@@ -7,75 +7,57 @@ The UC Data Advisor is a multi-agent system for natural language dataset discove
 ## Architecture Diagram
 
 ```mermaid
-flowchart TB
-    subgraph CLIENTS["CLIENTS"]
-        TEAMS[Microsoft Teams Bot]
-        NB[Databricks Notebook]
-        HTTP[Any HTTP Client]
-    end
+flowchart LR
+  subgraph CLIENTS["Clients"]
+    direction TB
+    TEAMS[Teams Bot]
+    NB[Notebook]
+    HTTP[HTTP Client]
+  end
 
-    subgraph SERVING["MODEL SERVING ENDPOINTS"]
-        ORCH[Orchestrator Agent]
-        DA[Discovery Agent]
-        DM[Metrics Agent]
-        QA[Q&A Agent]
-    end
+  ORCH[Orchestrator]
 
-    subgraph LLM["LLM"]
-        CLAUDE[Foundation Model]
-    end
+  subgraph AGENTS["Sub-agents"]
+    direction TB
+    DA[Discovery]
+    DM[Metrics]
+    QA[Q&A]
+  end
 
-    subgraph TOOLS["TOOLS & RETRIEVAL"]
-        UC_API[UC API Tools]
-        VS1[Vector Index - Metadata]
-        GENIE[Genie Space]
-        VS2[Vector Index - Knowledge]
-    end
+  subgraph TOOLS["Tools + retrieval"]
+    direction TB
+    VS1[VS Metadata]
+    GENIE[Genie Space]
+    VS2[VS Knowledge]
+  end
 
-    subgraph DATA["DATA LAYER"]
-        UCat[(Unity Catalog)]
-    end
+  UCat[(Unity Catalog)]
+  CLAUDE[(Foundation Model)]
 
-    subgraph AUTH["AUTH"]
-        SP[Service Principal]
-        SCOPE[Secret Scope]
-        SP -.-> SCOPE
-    end
+  CLIENTS --> ORCH --> AGENTS
+  DA --> VS1
+  DM --> GENIE
+  QA --> VS2
+  TOOLS --> UCat
 
-    CLIENTS --> ORCH
-    ORCH -->|discovery| DA
-    ORCH -->|metrics| DM
-    ORCH -->|Q&A| QA
-    ORCH -->|classify| CLAUDE
+  ORCH -.->|LLM| CLAUDE
+  AGENTS -.->|LLM| CLAUDE
 
-    DA -->|LLM| CLAUDE
-    DM -->|LLM| CLAUDE
-    QA -->|LLM| CLAUDE
+  SP[Service Principal] -.->|CAN_QUERY| ORCH
+  SP -.->|OAuth M2M| TOOLS
 
-    DA -.-> UC_API
-    DA -.-> VS1
-    DM -.-> GENIE
-    QA -.-> VS2
-
-    GENIE --> UCat
-    UC_API --> UCat
-
-    SP -->|CAN_QUERY| SERVING
-    SP -->|OAuth M2M| TOOLS
-
-    classDef clients fill:#e8f4f8,stroke:#0077b6
-    classDef serving fill:#fff3e0,stroke:#ff9800
-    classDef llm fill:#fce4ec,stroke:#e91e63
-    classDef tools fill:#f3e5f5,stroke:#9c27b0
-    classDef data fill:#e8f5e9,stroke:#4caf50
-    classDef auth fill:#f5f5f5,stroke:#757575
-
-    class TEAMS,NB,HTTP clients
-    class ORCH,DA,DM,QA serving
-    class CLAUDE llm
-    class UC_API,VS1,GENIE,VS2 tools
-    class UCat data
-    class SP,SCOPE auth
+  classDef ep fill:#fff3e0,stroke:#ff9800,color:#000
+  classDef tool fill:#f3e5f5,stroke:#9c27b0,color:#000
+  classDef store fill:#e8f5e9,stroke:#4caf50,color:#000
+  classDef llm fill:#fce4ec,stroke:#e91e63,color:#000
+  classDef auth fill:#f5f5f5,stroke:#757575,color:#000
+  classDef client fill:#e8f4f8,stroke:#0077b6,color:#000
+  class ORCH,DA,DM,QA ep
+  class VS1,GENIE,VS2 tool
+  class UCat store
+  class CLAUDE llm
+  class SP auth
+  class TEAMS,NB,HTTP client
 ```
 
 ## Component Details
@@ -95,9 +77,10 @@ Discovery uses the VS metadata index exclusively — no runtime SQL queries. The
 
 Endpoint properties:
 - **Scale to zero** when idle
-- **OAuth M2M** authentication via SP credentials injected as env vars at deploy time
+- **OAuth M2M** authentication via SP credentials resolved at runtime from secret-scope references in env vars (`{{secrets/<scope>/sp-client-id}}` / `{{secrets/<scope>/sp-client-secret}}`)
 - **Environment variables**: `DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`, `SERVING_ENDPOINT`, `GENIE_SPACE_ID`, `VS_INDEX_METADATA`, `VS_INDEX_KNOWLEDGE`, `SOURCE_CATALOGS`
 - **Orchestrator** also gets: `DISCOVERY_AGENT_ENDPOINT`, `METRICS_AGENT_ENDPOINT`, `QA_AGENT_ENDPOINT`
+- **Scale-to-zero**: on by default; flip via `scale_to_zero: false` in config to keep endpoints warm
 
 ### Authentication
 
@@ -141,8 +124,9 @@ No runtime SQL queries — all metadata discovery goes through Vector Search.
 
 The setup pipeline (`src/setup/run.py`) automates all infrastructure creation and content generation:
 
-```
-provision → grant-uc → audit → generate → register → deploy-agents → grant-agent-permissions → deploy
+```mermaid
+flowchart LR
+  P[provision] --> G[grant-uc] --> A[audit] --> GEN[generate] --> R[register] --> DA[deploy-agents] --> GA[grant-agent-permissions] --> D[deploy]
 ```
 
 | Step | What It Does |
@@ -152,7 +136,7 @@ provision → grant-uc → audit → generate → register → deploy-agents →
 | `audit` | Queries system.information_schema for enriched metadata (tags, constraints, lineage, privileges, volumes) |
 | `generate` | Generates prompts, knowledge base, benchmarks |
 | `register` | Registers 4 agent MLflow models in UC (parallel) |
-| `deploy-agents` | Deploys 4 Model Serving endpoints via Agent Bricks (sub-agents parallel, orchestrator sequential) |
+| `deploy-agents` | Deploys 4 Model Serving endpoints via the Databricks SDK (sub-agents parallel, orchestrator sequential) |
 | `grant-agent-permissions` | Grants `CAN_QUERY` on all endpoints to SP |
 | `deploy` | Writes Delta tables, VS indexes, Genie config |
 | `verify` | Runs 8 benchmark questions (run separately) |
