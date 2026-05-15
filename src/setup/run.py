@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 def main():
     parser = argparse.ArgumentParser(description="UC Data Advisor Setup Pipeline")
     parser.add_argument("--config", default="config/advisor_config.yaml", help="Path to config file")
-    parser.add_argument("--step", choices=["provision", "grant-uc", "audit", "generate", "deploy", "register", "deploy-agents", "grant-agent-permissions", "verify", "teardown", "all"], default="all")
+    parser.add_argument("--step", choices=["provision", "grant-uc", "audit", "generate", "deploy", "register", "deploy-agents", "grant-agent-permissions", "deploy-app", "verify", "teardown", "all"], default="all")
     args = parser.parse_args()
 
     from .config_loader import load_config, save_config
@@ -69,12 +69,18 @@ def main():
         "register": _step_register,
         "deploy-agents": _step_deploy_agents,
         "grant-agent-permissions": _step_grant_agent_permissions,
+        "deploy-app": _step_deploy_app,
         "verify": _step_verify,
         "teardown": _step_teardown,
     }
 
+    all_steps = ["provision", "grant-uc", "audit", "generate", "register",
+                 "deploy-agents", "grant-agent-permissions", "deploy"]
+    if config.get("enable_dbx_app", False):
+        all_steps.append("deploy-app")
+
     if args.step == "all":
-        for step_name in ["provision", "grant-uc", "audit", "generate", "register", "deploy-agents", "grant-agent-permissions", "deploy"]:
+        for step_name in all_steps:
             steps[step_name](config, w)
             save_config(config, args.config)
     else:
@@ -167,6 +173,12 @@ def _step_grant_uc(config, w):
 def _step_grant_agent_permissions(config, w):
     from .deploy_agent_endpoints import grant_agent_permissions
     grant_agent_permissions(config, w)
+
+
+def _step_deploy_app(config, w):
+    """Optional: deploy a Databricks App as a chat UI for end users."""
+    from .deploy_app import deploy_app
+    deploy_app(config, w)
 
 
 def _step_teardown(config, w):

@@ -33,6 +33,7 @@ _INPUT_KEYS: frozenset[str] = frozenset({
     "exclude_schemas",
     "enable_metric_views",
     "enable_volume_indexing",
+    "enable_dbx_app",
     "scale_to_zero",
     "enable_ai_gateway_guardrails",
     "rate_limits",

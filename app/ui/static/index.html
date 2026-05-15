@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UC Data Advisor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Source+Code+Pro:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #F5F5F0;
+  --white: #FFFFFF;
+  --gray-900: #1B1F24;
+  --gray-700: #3B3F46;
+  --gray-500: #6B7280;
+  --gray-300: #D1D5DB;
+  --gray-100: #EDEEE9;
+  --red: #FF3621;
+  --red-light: rgba(255, 54, 33, 0.08);
+  --red-dark: #E0311D;
+  --font: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --mono: 'Source Code Pro', 'SF Mono', monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--gray-900);
+  font-family: var(--font);
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+}
+header {
+  padding: 1.1rem 1.6rem;
+  border-bottom: 1px solid var(--gray-300);
+  background: var(--white);
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+header .logo {
+  width: 28px; height: 28px;
+  background: var(--red);
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--white);
+  font-weight: 700;
+  font-size: 0.85rem;
+  font-family: var(--mono);
+}
+header h1 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+header .sub {
+  font-size: 0.78rem;
+  color: var(--gray-500);
+  margin-left: auto;
+}
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  max-width: 880px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 1.2rem 1.6rem;
+  overflow: hidden;
+}
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.msg {
+  max-width: 75%;
+  padding: 0.7rem 0.95rem;
+  border-radius: 12px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.msg.user {
+  background: var(--red);
+  color: var(--white);
+  align-self: flex-end;
+  border-bottom-right-radius: 4px;
+}
+.msg.bot {
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+}
+.msg.bot pre, .msg.bot code {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  background: var(--gray-100);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+}
+.msg.bot pre {
+  padding: 0.8rem 1rem;
+  margin: 0.5rem 0;
+  overflow-x: auto;
+}
+.msg.bot table {
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+}
+.msg.bot th, .msg.bot td {
+  border: 1px solid var(--gray-300);
+  padding: 0.3rem 0.6rem;
+  text-align: left;
+}
+.msg.bot th { background: var(--gray-100); font-weight: 600; }
+.msg.typing { color: var(--gray-500); font-style: italic; }
+form {
+  display: flex;
+  gap: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--gray-300);
+}
+input[type="text"] {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  font-family: var(--font);
+  font-size: 0.95rem;
+  border: 1px solid var(--gray-300);
+  border-radius: 8px;
+  background: var(--white);
+  color: var(--gray-900);
+  outline: none;
+  transition: border-color 0.15s;
+}
+input[type="text"]:focus { border-color: var(--red); }
+button {
+  padding: 0.75rem 1.5rem;
+  font-family: var(--font);
+  font-size: 0.92rem;
+  font-weight: 600;
+  background: var(--red);
+  color: var(--white);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+button:hover:not(:disabled) { background: var(--red-dark); }
+button:disabled { background: var(--gray-300); cursor: not-allowed; }
+.empty {
+  text-align: center;
+  color: var(--gray-500);
+  padding: 3rem 1rem;
+  font-size: 0.95rem;
+}
+.empty .examples {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1.2rem;
+}
+.empty .example {
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--gray-700);
+  transition: border-color 0.15s, background 0.15s;
+  text-align: left;
+  max-width: 460px;
+  margin: 0 auto;
+  width: 100%;
+}
+.empty .example:hover { border-color: var(--red); background: var(--red-light); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">UC</div>
+  <h1>UC Data Advisor</h1>
+  <span class="sub" id="user"></span>
+</header>
+
+<main>
+  <div id="messages">
+    <div class="empty" id="empty">
+      <div>Ask about your Unity Catalog data.</div>
+      <div class="examples">
+        <button class="example" type="button">What tables are available in the workspace?</button>
+        <button class="example" type="button">Show me the columns in the sales_transactions table</button>
+        <button class="example" type="button">How many sales customers are there?</button>
+        <button class="example" type="button">How do I request access to a dataset?</button>
+      </div>
+    </div>
+  </div>
+  <form id="chat-form">
+    <input type="text" id="input" placeholder="Ask a question..." autocomplete="off" required>
+    <button type="submit" id="send">Send</button>
+  </form>
+</main>
+
+<script>
+const messages = document.getElementById("messages");
+const empty = document.getElementById("empty");
+const form = document.getElementById("chat-form");
+const input = document.getElementById("input");
+const send = document.getElementById("send");
+const userEl = document.getElementById("user");
+let conversationId = "";
+
+fetch("/api/health").then(r => r.json()).then(d => {
+  if (d.orchestrator_endpoint && d.orchestrator_endpoint !== "<unset>") {
+    userEl.textContent = "endpoint: " + d.orchestrator_endpoint;
+  } else {
+    userEl.textContent = "endpoint not configured";
+    userEl.style.color = "var(--red)";
+  }
+}).catch(() => {});
+
+function renderMarkdown(text) {
+  // Tiny markdown subset: code, bold, italic, line breaks, simple tables, headings.
+  let html = text
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/```([\s\S]*?)```/g, "<pre>$1</pre>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|\n)### (.+)/g, "$1<h3>$2</h3>")
+    .replace(/(^|\n)## (.+)/g, "$1<h2>$2</h2>")
+    .replace(/\n/g, "<br>");
+  return html;
+}
+
+function addMessage(role, text) {
+  if (empty) empty.remove();
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  if (role === "bot") {
+    div.innerHTML = renderMarkdown(text);
+  } else {
+    div.textContent = text;
+  }
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+  return div;
+}
+
+async function sendMessage(text) {
+  addMessage("user", text);
+  const typing = addMessage("bot", "");
+  typing.classList.add("typing");
+  typing.textContent = "Thinking...";
+  send.disabled = true;
+  input.disabled = true;
+
+  try {
+    const resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    typing.remove();
+    if (!resp.ok) {
+      addMessage("bot", "Error: " + (data.detail || resp.statusText));
+    } else {
+      addMessage("bot", data.response);
+    }
+  } catch (e) {
+    typing.remove();
+    addMessage("bot", "Network error: " + e.message);
+  } finally {
+    send.disabled = false;
+    input.disabled = false;
+    input.focus();
+  }
+}
+
+form.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  sendMessage(text);
+});
+
+document.querySelectorAll(".example").forEach(btn => {
+  btn.addEventListener("click", () => sendMessage(btn.textContent));
+});
+
+input.focus();
+</script>
+</body>
+</html>

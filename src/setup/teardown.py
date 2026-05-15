@@ -30,10 +30,14 @@ def teardown(config: dict, w) -> None:
     print(f"  Catalog:    {catalog}")
     print()
 
-    # 1. Delete agent deployments + endpoints
+    # 1. Delete optional Databricks App
+    from .deploy_app import teardown_app
+    teardown_app(config, w)
+
+    # 2. Delete agent deployments + endpoints
     _teardown_agent_endpoints(infra, catalog, app_name)
 
-    # 2. Delete VS indexes
+    # 3. Delete VS indexes
     _teardown_vs_indexes(w, catalog)
 
     # 3. Delete Genie spaces
