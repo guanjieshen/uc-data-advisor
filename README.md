@@ -42,6 +42,79 @@ flowchart LR
   class UCat,CLAUDE store
 ```
 
+## Metadata Sources
+
+Everything the agents know about Unity Catalog comes from a one-shot audit pipeline that
+reads system tables (read-only) and a small amount of per-table runtime sampling. No SQL
+runs at agent query time — answers come from the persisted Delta tables and the Vector
+Search / Genie indexes built from them.
+
+```mermaid
+flowchart LR
+  subgraph IS["system.information_schema"]
+    direction TB
+    CAT[catalogs]
+    SCH[schemata]
+    TBL[tables]
+    COL[columns]
+    TTAG[table_tags]
+    CTAG[column_tags]
+    CONS["table_constraints<br/>+ constraint_column_usage"]
+    PRIV[table_privileges]
+    VOL[volumes]
+  end
+
+  subgraph SA["system.access"]
+    LIN[table_lineage]
+  end
+
+  subgraph RT["per-table runtime queries"]
+    direction TB
+    SAMP[Sample rows]
+    VFILES["Volume file contents<br/>(optional)"]
+  end
+
+  AUDIT["Audit pipeline<br/>name parse · tag rollup<br/>lineage walk · LLM enrich"]
+
+  MDOC[(uc_metadata_docs Delta)]
+  KB[(knowledge_base Delta)]
+  GZ[Genie space config]
+
+  VSM[VS metadata index]
+  VSK[VS knowledge index]
+  GSP[Genie space]
+
+  IS --> AUDIT
+  SA --> AUDIT
+  RT --> AUDIT
+  AUDIT --> MDOC
+  AUDIT --> KB
+  AUDIT --> GZ
+  MDOC --> VSM
+  KB --> VSK
+  GZ --> GSP
+
+  classDef src fill:#fff8e1,stroke:#f57f17,color:#000
+  classDef proc fill:#fee2e2,stroke:#dc2626,color:#000
+  classDef store fill:#dbeafe,stroke:#2563eb,color:#000
+  class CAT,SCH,TBL,COL,TTAG,CTAG,CONS,PRIV,VOL,LIN,SAMP,VFILES src
+  class AUDIT proc
+  class MDOC,KB,GZ,VSM,VSK,GSP store
+```
+
+| Source | What it gives the agents |
+|--------|---------------------------|
+| `system.information_schema.catalogs` / `schemata` | Catalog + schema names, owners, comments |
+| `system.information_schema.tables` | Table names, types, owners, comments, timestamps |
+| `system.information_schema.columns` | Column names, types, nullability, ordinal position |
+| `system.information_schema.table_tags` / `column_tags` | Curated business tags at table + column scope |
+| `system.information_schema.table_constraints` + `constraint_column_usage` | Primary / foreign / unique keys for join hints |
+| `system.information_schema.table_privileges` | Grants — used to infer who uses what |
+| `system.information_schema.volumes` | UC volumes (paths, owners, comments) |
+| `system.access.table_lineage` | Upstream / downstream table edges (best-effort) |
+| Per-table sample SQL | A few sample rows per table for value-level context |
+| Volume file contents (opt-in) | Text from files inside indexed volumes |
+
 ## Components
 
 | Layer | Component | Purpose |
