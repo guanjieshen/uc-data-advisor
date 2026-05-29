@@ -400,6 +400,28 @@ def deploy(config: dict) -> None:
         with open(req_path, "a") as f:
             f.write("\ndatabricks-sdk>=0.50.0\n")
 
+    # Normalize all .py files to ASCII before zipping. Azure App Service's zip
+    # extraction transcodes UTF-8 multi-byte sequences (em dash, copyright sign,
+    # smart quotes) into Windows-1252 single bytes (e.g. e2 80 94 -> 97), which
+    # Python 3 then rejects with "Non-UTF-8 code starting with '\\x97'".
+    _ascii_map = str.maketrans({
+        "—": "--", "–": "-", "©": "(c)",
+        "‘": "'", "’": "'", "“": '"', "”": '"',
+    })
+    for _root, _dirs, _files in os.walk(teams_bot_dir):
+        for _f in _files:
+            if not _f.endswith(".py"):
+                continue
+            _p = os.path.join(_root, _f)
+            try:
+                _text = open(_p, "rb").read().decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            _clean = _text.translate(_ascii_map)
+            if _clean != _text:
+                with open(_p, "wb") as _fh:
+                    _fh.write(_clean.encode("ascii", "ignore"))
+
     # Zip and deploy
     import zipfile
     zip_path = os.path.join(os.path.dirname(__file__), ".bot-deploy.zip")
@@ -507,7 +529,7 @@ def teardown(config: dict) -> None:
 
 def _write_bot_app(bot_dir: str) -> None:
     """Write the simplified bot app.py (no OAuth, uses SP)."""
-    app_code = '''"""UC Data Advisor Teams Bot — uses SP credentials directly."""
+    app_code = '''"""UC Data Advisor Teams Bot -- uses SP credentials directly."""
 
 import os
 import sys
